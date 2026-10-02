@@ -1,5 +1,7 @@
 #include "placamera/reference/CameraReferenceUncertainty.h"
 
+#include "../internal/plamatrix_rotation.h"
+
 #include <algorithm>
 #include <cmath>
 #include <exception>
@@ -202,30 +204,6 @@ namespace placamera::reference
             }
         }
 
-        bool validRotation(const RotationMatrix& rotation) noexcept
-        {
-            for (double value : rotation)
-            {
-                if (!std::isfinite(value))
-                {
-                    return false;
-                }
-            }
-            const auto dot_row = [&rotation](std::size_t first, std::size_t second)
-            {
-                return rotation[first] * rotation[second] + rotation[first + 1] * rotation[second + 1] +
-                       rotation[first + 2] * rotation[second + 2];
-            };
-            const double determinant = rotation[0] * (rotation[4] * rotation[8] - rotation[5] * rotation[7]) -
-                                       rotation[1] * (rotation[3] * rotation[8] - rotation[5] * rotation[6]) +
-                                       rotation[2] * (rotation[3] * rotation[7] - rotation[4] * rotation[6]);
-            constexpr double tolerance = 1.0e-8;
-            return std::abs(dot_row(0, 0) - 1.0) <= tolerance && std::abs(dot_row(3, 3) - 1.0) <= tolerance &&
-                   std::abs(dot_row(6, 6) - 1.0) <= tolerance && std::abs(dot_row(0, 3)) <= tolerance &&
-                   std::abs(dot_row(0, 6)) <= tolerance && std::abs(dot_row(3, 6)) <= tolerance &&
-                   std::abs(determinant - 1.0) <= tolerance;
-        }
-
     } // namespace
 
     PoseCovariance PoseCovariance::diagonal(std::vector<double> values,
@@ -321,7 +299,7 @@ namespace placamera::reference
                                                              double scale,
                                                              const RotationMatrix& targetFromSource)
     {
-        if (!std::isfinite(scale) || !(scale > 0.0) || !validRotation(targetFromSource))
+        if (!std::isfinite(scale) || !(scale > 0.0) || !internal::validRotation(targetFromSource))
         {
             return Result<PoseCovariance>::failure(
                 CameraErrorCode::InvalidArgument,

@@ -1,5 +1,7 @@
 #include "placamera/linescan_camera.h"
 
+#include "../internal/plamatrix_rotation.h"
+
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -10,158 +12,6 @@ namespace placamera
 
     namespace
     {
-
-        using Quaternion = std::array<double, 4>;
-
-        Quaternion normalizeQuaternion(Quaternion value)
-        {
-            double norm = 0.0;
-            for (const double component : value)
-            {
-                norm += component * component;
-            }
-            norm = std::sqrt(norm);
-            if (!(norm > 0.0) || !std::isfinite(norm))
-            {
-                throw CameraValidationError(CameraErrorCode::InvalidPose,
-                                            "line-scan trajectory quaternion must be finite and non-zero");
-            }
-            for (double& component : value)
-            {
-                component /= norm;
-            }
-            return value;
-        }
-
-        Quaternion matrixToQuaternion(const RotationMatrix& matrix)
-        {
-            const double trace = matrix[0] + matrix[4] + matrix[8];
-            Quaternion result{};
-            if (trace > 0.0)
-            {
-                const double scale = 0.5 / std::sqrt(trace + 1.0);
-                result = {0.25 / scale,
-                          (matrix[7] - matrix[5]) * scale,
-                          (matrix[2] - matrix[6]) * scale,
-                          (matrix[3] - matrix[1]) * scale};
-            }
-            else if (matrix[0] > matrix[4] && matrix[0] > matrix[8])
-            {
-                const double scale = 2.0 * std::sqrt(1.0 + matrix[0] - matrix[4] - matrix[8]);
-                result = {(matrix[7] - matrix[5]) / scale,
-                          0.25 * scale,
-                          (matrix[1] + matrix[3]) / scale,
-                          (matrix[2] + matrix[6]) / scale};
-            }
-            else if (matrix[4] > matrix[8])
-            {
-                const double scale = 2.0 * std::sqrt(1.0 + matrix[4] - matrix[0] - matrix[8]);
-                result = {(matrix[2] - matrix[6]) / scale,
-                          (matrix[1] + matrix[3]) / scale,
-                          0.25 * scale,
-                          (matrix[5] + matrix[7]) / scale};
-            }
-            else
-            {
-                const double scale = 2.0 * std::sqrt(1.0 + matrix[8] - matrix[0] - matrix[4]);
-                result = {(matrix[3] - matrix[1]) / scale,
-                          (matrix[2] + matrix[6]) / scale,
-                          (matrix[5] + matrix[7]) / scale,
-                          0.25 * scale};
-            }
-            return normalizeQuaternion(result);
-        }
-
-        RotationMatrix quaternionToMatrix(const Quaternion& input)
-        {
-            const Quaternion q = normalizeQuaternion(input);
-            const double w = q[0];
-            const double x = q[1];
-            const double y = q[2];
-            const double z = q[3];
-            return {1.0 - 2.0 * (y * y + z * z),
-                    2.0 * (x * y - z * w),
-                    2.0 * (x * z + y * w),
-                    2.0 * (x * y + z * w),
-                    1.0 - 2.0 * (x * x + z * z),
-                    2.0 * (y * z - x * w),
-                    2.0 * (x * z - y * w),
-                    2.0 * (y * z + x * w),
-                    1.0 - 2.0 * (x * x + y * y)};
-        }
-
-        Quaternion slerp(Quaternion first, Quaternion second, double fraction)
-        {
-            first = normalizeQuaternion(first);
-            second = normalizeQuaternion(second);
-            double dot = 0.0;
-            for (int index = 0; index < 4; ++index)
-            {
-                dot += first[static_cast<std::size_t>(index)] * second[static_cast<std::size_t>(index)];
-            }
-            if (dot < 0.0)
-            {
-                dot = -dot;
-                for (double& component : second)
-                {
-                    component = -component;
-                }
-            }
-            dot = std::clamp(dot, -1.0, 1.0);
-            if (dot > 0.9995)
-            {
-                Quaternion result{};
-                for (int index = 0; index < 4; ++index)
-                {
-                    result[static_cast<std::size_t>(index)] =
-                        first[static_cast<std::size_t>(index)] +
-                        fraction * (second[static_cast<std::size_t>(index)] - first[static_cast<std::size_t>(index)]);
-                }
-                return normalizeQuaternion(result);
-            }
-
-            const double angle = std::acos(dot);
-            const double sine = std::sin(angle);
-            const double first_weight = std::sin((1.0 - fraction) * angle) / sine;
-            const double second_weight = std::sin(fraction * angle) / sine;
-            Quaternion result{};
-            for (int index = 0; index < 4; ++index)
-            {
-                result[static_cast<std::size_t>(index)] = first_weight * first[static_cast<std::size_t>(index)] +
-                                                          second_weight * second[static_cast<std::size_t>(index)];
-            }
-            return result;
-        }
-
-        RotationMatrix multiply(const RotationMatrix& first, const RotationMatrix& second) noexcept
-        {
-            RotationMatrix result{};
-            for (int row = 0; row < 3; ++row)
-            {
-                for (int column = 0; column < 3; ++column)
-                {
-                    for (int inner = 0; inner < 3; ++inner)
-                    {
-                        result[static_cast<std::size_t>(row * 3 + column)] +=
-                            first[static_cast<std::size_t>(row * 3 + inner)] *
-                            second[static_cast<std::size_t>(inner * 3 + column)];
-                    }
-                }
-            }
-            return result;
-        }
-
-        RotationMatrix transpose(const RotationMatrix& matrix) noexcept
-        {
-            return {matrix[0], matrix[3], matrix[6], matrix[1], matrix[4], matrix[7], matrix[2], matrix[5], matrix[8]};
-        }
-
-        Vector3 multiply(const RotationMatrix& matrix, const Vector3& vector) noexcept
-        {
-            return {matrix[0] * vector[0] + matrix[1] * vector[1] + matrix[2] * vector[2],
-                    matrix[3] * vector[0] + matrix[4] * vector[1] + matrix[5] * vector[2],
-                    matrix[6] * vector[0] + matrix[7] * vector[1] + matrix[8] * vector[2]};
-        }
 
         template <typename Sample> std::size_t lowerInterval(const std::vector<Sample>& samples, double seconds)
         {
@@ -191,8 +41,11 @@ namespace placamera
             const QuaternionTrajectorySample& second = trajectory.samples[index + 1];
             const double fraction =
                 std::clamp((seconds - first.time.seconds) / (second.time.seconds - first.time.seconds), 0.0, 1.0);
-            return multiply(trajectory.constantRotation,
-                            quaternionToMatrix(slerp(first.scalarFirst, second.scalarFirst, fraction)));
+            const auto first_quaternion = internal::quaternionFromScalarFirst(first.scalarFirst);
+            const auto second_quaternion = internal::quaternionFromScalarFirst(second.scalarFirst);
+            return internal::multiply(
+                trajectory.constantRotation,
+                internal::rotationFromQuaternion(first_quaternion.slerp(fraction, second_quaternion)));
         }
 
         void validateQuaternionTrajectory(const FrameRotationTrajectory& trajectory, TimeScale scale, const char* label)
@@ -212,7 +65,11 @@ namespace placamera
                     throw CameraValidationError(CameraErrorCode::InvalidTime,
                                                 std::string(label) + " times are invalid");
                 }
-                (void)normalizeQuaternion(sample.scalarFirst);
+                if (!internal::validQuaternion(sample.scalarFirst))
+                {
+                    throw CameraValidationError(CameraErrorCode::InvalidPose,
+                                                std::string(label) + " contains an invalid quaternion");
+                }
             }
         }
 
@@ -357,8 +214,8 @@ namespace placamera
             const RotationMatrix inertial_to_world = rotationAt(trajectory.inertialToWorld, time.seconds);
             const RotationMatrix inertial_to_sensor = rotationAt(trajectory.inertialToSensor, time.seconds);
             return makePose(frame,
-                            multiply(inertial_to_world, inertial_center),
-                            multiply(inertial_to_world, transpose(inertial_to_sensor)));
+                            internal::multiply(inertial_to_world, inertial_center),
+                            internal::multiply(inertial_to_world, internal::transposeArray(inertial_to_sensor)));
         }
 
         if (time.seconds < _samples.front().time.seconds || time.seconds > _samples.back().time.seconds)
@@ -382,13 +239,13 @@ namespace placamera
         const TrajectorySample& first = _samples[upper_index];
         const TrajectorySample& second = _samples[upper_index + 1];
         const double fraction = (time.seconds - first.time.seconds) / (second.time.seconds - first.time.seconds);
-        const Quaternion orientation = slerp(matrixToQuaternion(first.cameraToWorldRotation),
-                                             matrixToQuaternion(second.cameraToWorldRotation),
-                                             std::clamp(fraction, 0.0, 1.0));
+        const auto orientation = internal::quaternionFromRotation(first.cameraToWorldRotation)
+                                     .slerp(std::clamp(fraction, 0.0, 1.0),
+                                            internal::quaternionFromRotation(second.cameraToWorldRotation));
         const Vector3 center{first.center[0] + fraction * (second.center[0] - first.center[0]),
                              first.center[1] + fraction * (second.center[1] - first.center[1]),
                              first.center[2] + fraction * (second.center[2] - first.center[2])};
-        return makePose(frame, center, quaternionToMatrix(orientation));
+        return makePose(frame, center, internal::rotationFromQuaternion(orientation));
     }
 
     LineScanTrajectory::LineScanTrajectory(std::vector<TrajectorySample> samples)

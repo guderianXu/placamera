@@ -1,17 +1,20 @@
 #include "placamera/dataset_formats.h"
 
+#include "../internal/plamatrix_rotation.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
 #include <optional>
-#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <tinyxml2.h>
 
 namespace placamera
 {
@@ -172,8 +175,6 @@ namespace placamera
             return std::string(input);
         }
 
-        std::optional<std::string> xmlAttribute(const std::string& xml, const std::string& name);
-
         double finiteNumber(std::string_view text, std::string_view field)
         {
             const std::string normalized = trim(std::string(text));
@@ -222,7 +223,80 @@ namespace placamera
             return value;
         }
 
-        FrameProjectionModel metashapeProjection(const std::string& sensor)
+        std::string_view localName(const tinyxml2::XMLElement& element)
+        {
+            const char* name = element.Name();
+            if (name == nullptr)
+            {
+                return {};
+            }
+            const std::string_view qualified(name);
+            const auto separator = qualified.rfind(':');
+            return separator == std::string_view::npos ? qualified : qualified.substr(separator + 1);
+        }
+
+        bool isNamed(const tinyxml2::XMLElement& element, std::string_view name)
+        {
+            return localName(element) == name;
+        }
+
+        void descendants(const tinyxml2::XMLNode& node,
+                         std::string_view name,
+                         std::vector<const tinyxml2::XMLElement*>* output)
+        {
+            for (const tinyxml2::XMLNode* child = node.FirstChild(); child != nullptr; child = child->NextSibling())
+            {
+                const auto* element = child->ToElement();
+                if (element != nullptr && isNamed(*element, name))
+                {
+                    output->push_back(element);
+                }
+                descendants(*child, name, output);
+            }
+        }
+
+        std::optional<std::string> xmlAttribute(const tinyxml2::XMLElement& element, std::string_view name)
+        {
+            for (const tinyxml2::XMLAttribute* attribute = element.FirstAttribute(); attribute != nullptr;
+                 attribute = attribute->Next())
+            {
+                const char* qualified = attribute->Name();
+                if (qualified == nullptr)
+                {
+                    continue;
+                }
+                const std::string_view qualified_name(qualified);
+                const auto separator = qualified_name.rfind(':');
+                const auto local = separator == std::string_view::npos ? qualified_name
+                                                                          : qualified_name.substr(separator + 1);
+                if (local == name)
+                {
+                    return std::string(attribute->Value() == nullptr ? "" : attribute->Value());
+                }
+            }
+            return std::nullopt;
+        }
+
+        std::optional<std::string> xmlElementText(const tinyxml2::XMLNode& node, std::string_view name)
+        {
+            std::vector<const tinyxml2::XMLElement*> elements;
+            descendants(node, name, &elements);
+            if (elements.empty())
+            {
+                return std::nullopt;
+            }
+            const char* text = elements.front()->GetText();
+            return text == nullptr ? std::string{} : trim(text);
+        }
+
+        double xmlDoubleOr(const tinyxml2::XMLNode& node, std::string_view tag, double fallback)
+        {
+            const auto value = xmlElementText(node, tag);
+            return value.has_value() && !value->empty() ? finiteNumber(*value, std::string("<") + std::string(tag) + ">")
+                                                        : fallback;
+        }
+
+        FrameProjectionModel metashapeProjection(const tinyxml2::XMLElement& sensor)
         {
             const std::string value =
                 lower(xmlAttribute(sensor, "type").value_or(xmlAttribute(sensor, "projection").value_or("frame")));
@@ -253,17 +327,15 @@ namespace placamera
             throw std::runtime_error("Metashape sensor has unsupported projection type: " + value);
         }
 
-        RollingShutterMode metashapeRollingShutter(const std::string& sensor)
+        RollingShutterMode metashapeRollingShutter(const tinyxml2::XMLNode& sensor)
         {
             RollingShutterMode mode = RollingShutterMode::Disabled;
-            const std::regex property_pattern("<property\\b[^>]*/?>");
-            for (auto it = std::sregex_iterator(sensor.begin(), sensor.end(), property_pattern);
-                 it != std::sregex_iterator();
-                 ++it)
+            std::vector<const tinyxml2::XMLElement*> properties;
+            descendants(sensor, "property", &properties);
+            for (const auto* property : properties)
             {
-                const std::string property = it->str();
-                const auto name = xmlAttribute(property, "name");
-                const auto value = xmlAttribute(property, "value");
+                const auto name = xmlAttribute(*property, "name");
+                const auto value = xmlAttribute(*property, "value");
                 if (!name || !value)
                 {
                     continue;
@@ -320,11 +392,6 @@ namespace placamera
             return values;
         }
 
-        std::array<double, 9> transpose(const std::array<double, 9>& matrix)
-        {
-            return {matrix[0], matrix[3], matrix[6], matrix[1], matrix[4], matrix[7], matrix[2], matrix[5], matrix[8]};
-        }
-
         ImportedCamera middleburyLine(const std::string& line)
         {
             std::istringstream input(line);
@@ -346,7 +413,7 @@ namespace placamera
             std::copy_n(values.begin(), 9, camera.calibration.intrinsicMatrix.begin());
             std::array<double, 9> world_to_camera{};
             std::copy_n(values.begin() + 9, 9, world_to_camera.begin());
-            camera.cameraToWorldRotation = transpose(world_to_camera);
+            camera.cameraToWorldRotation = internal::transposeArray(world_to_camera);
             for (std::size_t row = 0; row < 3; ++row)
             {
                 camera.center[row] = -(camera.cameraToWorldRotation[row * 3] * values[18] +
@@ -356,69 +423,32 @@ namespace placamera
             return camera;
         }
 
-        std::vector<std::string> xmlBlocks(const std::string& xml, const std::string& tag)
-        {
-            std::vector<std::string> blocks;
-            const std::regex pattern("<" + tag + "\\b[^>]*>[\\s\\S]*?</" + tag + ">");
-            for (auto it = std::sregex_iterator(xml.begin(), xml.end(), pattern); it != std::sregex_iterator(); ++it)
-            {
-                blocks.push_back(it->str());
-            }
-            return blocks;
-        }
-
-        std::optional<std::string> xmlElementText(const std::string& xml, const std::string& tag)
-        {
-            const std::regex pattern("<" + tag + "\\b[^>]*>([\\s\\S]*?)</" + tag + ">");
-            std::smatch match;
-            if (!std::regex_search(xml, match, pattern) || match.size() < 2)
-            {
-                return std::nullopt;
-            }
-            return trim(match[1].str());
-        }
-
-        std::optional<std::string> xmlAttribute(const std::string& xml, const std::string& name)
-        {
-            const std::regex pattern("(?:^|[\\s<])" + name + "\\s*=\\s*[\"']([^\"']*)[\"']");
-            std::smatch match;
-            if (!std::regex_search(xml, match, pattern) || match.size() < 2)
-            {
-                return std::nullopt;
-            }
-            return match[1].str();
-        }
-
-        double xmlDoubleOr(const std::string& xml, const std::string& tag, double fallback)
-        {
-            const auto value = xmlElementText(xml, tag);
-            return value.has_value() && !value->empty() ? finiteNumber(*value, "<" + tag + ">") : fallback;
-        }
-
         struct MetashapeSensor
         {
             ImportedPixelCalibration calibration;
             RollingShutterMode rollingShutterMode = RollingShutterMode::Disabled;
         };
 
-        std::unordered_map<int, MetashapeSensor> metashapeSensors(const std::string& xml)
+        std::unordered_map<int, MetashapeSensor> metashapeSensors(const tinyxml2::XMLDocument& document)
         {
             std::unordered_map<int, MetashapeSensor> sensors;
-            for (const std::string& sensor_block : xmlBlocks(xml, "sensor"))
+            std::vector<const tinyxml2::XMLElement*> sensor_elements;
+            descendants(document, "sensor", &sensor_elements);
+            for (const auto* sensor_element : sensor_elements)
             {
-                const auto id = xmlAttribute(sensor_block, "id");
+                const auto id = xmlAttribute(*sensor_element, "id");
                 if (!id.has_value())
                 {
                     continue;
                 }
-                const std::regex resolution_pattern("<resolution\\b[^>]*/?>");
-                std::smatch resolution;
-                if (!std::regex_search(sensor_block, resolution, resolution_pattern))
+                std::vector<const tinyxml2::XMLElement*> resolutions;
+                descendants(*sensor_element, "resolution", &resolutions);
+                if (resolutions.empty())
                 {
                     throw std::runtime_error("Metashape sensor has no resolution");
                 }
-                const auto width_text = xmlAttribute(resolution.str(), "width");
-                const auto height_text = xmlAttribute(resolution.str(), "height");
+                const auto width_text = xmlAttribute(*resolutions.front(), "width");
+                const auto height_text = xmlAttribute(*resolutions.front(), "height");
                 if (!width_text.has_value() || !height_text.has_value())
                 {
                     throw std::runtime_error("Metashape resolution has no width or height");
@@ -430,45 +460,46 @@ namespace placamera
                     throw std::runtime_error("Metashape resolution width and height must be positive");
                 }
 
-                const auto calibrations = xmlBlocks(sensor_block, "calibration");
+                std::vector<const tinyxml2::XMLElement*> calibrations;
+                descendants(*sensor_element, "calibration", &calibrations);
                 if (calibrations.empty())
                 {
                     throw std::runtime_error("Metashape sensor has no calibration");
                 }
-                std::string calibration = calibrations.front();
-                for (const auto& block : calibrations)
+                const tinyxml2::XMLElement* calibration = calibrations.front();
+                for (const auto* block : calibrations)
                 {
-                    if (xmlAttribute(block, "class") == "adjusted")
+                    if (xmlAttribute(*block, "class") == "adjusted")
                     {
                         calibration = block;
                         break;
                     }
                 }
-                const double focal = xmlDoubleOr(calibration, "f", 0.0);
-                const double b1 = xmlDoubleOr(calibration, "b1", 0.0);
-                const double b2 = xmlDoubleOr(calibration, "b2", 0.0);
-                const double fx = xmlDoubleOr(calibration, "fx", focal + b1);
-                const double fy = xmlDoubleOr(calibration, "fy", focal);
+                const double focal = xmlDoubleOr(*calibration, "f", 0.0);
+                const double b1 = xmlDoubleOr(*calibration, "b1", 0.0);
+                const double b2 = xmlDoubleOr(*calibration, "b2", 0.0);
+                const double fx = xmlDoubleOr(*calibration, "fx", focal + b1);
+                const double fy = xmlDoubleOr(*calibration, "fy", focal);
                 if (fx <= 0.0 || fy <= 0.0)
                 {
                     throw std::runtime_error("Metashape calibration has no valid focal length");
                 }
-                const double cx = xmlDoubleOr(calibration, "cx", 0.0);
-                const double cy = xmlDoubleOr(calibration, "cy", 0.0);
+                const double cx = xmlDoubleOr(*calibration, "cx", 0.0);
+                const double cy = xmlDoubleOr(*calibration, "cy", 0.0);
                 MetashapeSensor sensor;
-                sensor.calibration.projectionModel = metashapeProjection(sensor_block);
-                sensor.rollingShutterMode = metashapeRollingShutter(sensor_block);
+                sensor.calibration.projectionModel = metashapeProjection(*sensor_element);
+                sensor.rollingShutterMode = metashapeRollingShutter(*sensor_element);
                 sensor.calibration.intrinsicMatrix = {
                     fx, b2, width * 0.5 + cx, 0.0, fy, height * 0.5 + cy, 0.0, 0.0, 1.0};
                 auto& distortion = sensor.calibration.distortion;
-                distortion.radialK1 = xmlDoubleOr(calibration, "k1", 0.0);
-                distortion.radialK2 = xmlDoubleOr(calibration, "k2", 0.0);
-                distortion.radialK3 = xmlDoubleOr(calibration, "k3", 0.0);
-                distortion.radialK4 = xmlDoubleOr(calibration, "k4", 0.0);
-                distortion.tangentialP1 = xmlDoubleOr(calibration, "p1", 0.0);
-                distortion.tangentialP2 = xmlDoubleOr(calibration, "p2", 0.0);
-                distortion.tangentialP3 = xmlDoubleOr(calibration, "p3", 0.0);
-                distortion.tangentialP4 = xmlDoubleOr(calibration, "p4", 0.0);
+                distortion.radialK1 = xmlDoubleOr(*calibration, "k1", 0.0);
+                distortion.radialK2 = xmlDoubleOr(*calibration, "k2", 0.0);
+                distortion.radialK3 = xmlDoubleOr(*calibration, "k3", 0.0);
+                distortion.radialK4 = xmlDoubleOr(*calibration, "k4", 0.0);
+                distortion.tangentialP1 = xmlDoubleOr(*calibration, "p1", 0.0);
+                distortion.tangentialP2 = xmlDoubleOr(*calibration, "p2", 0.0);
+                distortion.tangentialP3 = xmlDoubleOr(*calibration, "p3", 0.0);
+                distortion.tangentialP4 = xmlDoubleOr(*calibration, "p4", 0.0);
                 distortion.tangentialConvention = BrownTangentialConvention::Metashape;
                 MetashapeCalibration exact;
                 exact.f = fy;
@@ -572,13 +603,23 @@ namespace placamera
         try
         {
             const std::string document = normalizeMetashapeXml(xml);
-            const auto sensors = metashapeSensors(document);
-            std::vector<ImportedCamera> cameras;
-            for (const std::string& block : xmlBlocks(document, "camera"))
+            tinyxml2::XMLDocument parsed;
+            const auto status = parsed.Parse(document.data(), document.size());
+            if (status != tinyxml2::XML_SUCCESS)
             {
-                const auto label = xmlAttribute(block, "label");
-                const auto sensor_id = xmlAttribute(block, "sensor_id");
-                const auto transform = xmlElementText(block, "transform");
+                const char* detail = parsed.ErrorStr();
+                throw std::runtime_error(std::string("Metashape XML parse failed") +
+                                         (detail == nullptr ? "" : ": " + std::string(detail)));
+            }
+            const auto sensors = metashapeSensors(parsed);
+            std::vector<ImportedCamera> cameras;
+            std::vector<const tinyxml2::XMLElement*> camera_elements;
+            descendants(parsed, "camera", &camera_elements);
+            for (const auto* block : camera_elements)
+            {
+                const auto label = xmlAttribute(*block, "label");
+                const auto sensor_id = xmlAttribute(*block, "sensor_id");
+                const auto transform = xmlElementText(*block, "transform");
                 if (!label.has_value() || !sensor_id.has_value() || !transform.has_value())
                 {
                     continue;

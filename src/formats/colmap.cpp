@@ -1,5 +1,7 @@
 #include "placamera/colmap.h"
 
+#include "../internal/plamatrix_rotation.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -61,11 +63,6 @@ namespace placamera
                    model == "SIMPLE_RADIAL_FISHEYE" || model == "RADIAL_FISHEYE";
         }
 
-        RotationMatrix transpose(const RotationMatrix& matrix)
-        {
-            return {matrix[0], matrix[3], matrix[6], matrix[1], matrix[4], matrix[7], matrix[2], matrix[5], matrix[8]};
-        }
-
         RotationMatrix rotationFromColmapQuaternion(double qw, double qx, double qy, double qz)
         {
             const double norm = std::hypot(std::hypot(qw, qx), std::hypot(qy, qz));
@@ -73,19 +70,7 @@ namespace placamera
             {
                 throw std::invalid_argument("COLMAP images.txt contains an invalid quaternion");
             }
-            qw /= norm;
-            qx /= norm;
-            qy /= norm;
-            qz /= norm;
-            return {1.0 - 2.0 * (qy * qy + qz * qz),
-                    2.0 * (qx * qy - qz * qw),
-                    2.0 * (qx * qz + qy * qw),
-                    2.0 * (qx * qy + qz * qw),
-                    1.0 - 2.0 * (qx * qx + qz * qz),
-                    2.0 * (qy * qz - qx * qw),
-                    2.0 * (qx * qz - qy * qw),
-                    2.0 * (qy * qz + qx * qw),
-                    1.0 - 2.0 * (qx * qx + qy * qy)};
+            return internal::rotationFromQuaternion(internal::quaternionFromScalarFirst({qw, qx, qy, qz}));
         }
     } // namespace
 
@@ -149,7 +134,7 @@ namespace placamera
 
         try
         {
-            const auto camera_to_world = transpose(rotationFromColmapQuaternion(qw, qx, qy, qz));
+            const auto camera_to_world = internal::transposeArray(rotationFromColmapQuaternion(qw, qx, qy, qz));
             Vector3 center{};
             for (int row = 0; row < 3; ++row)
             {

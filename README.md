@@ -13,8 +13,8 @@ be an optional component that links csmapi; the core library stays independent.
 
 Version 0.2 contains:
 
-- the `CameraDefinition`, `RasterModel`, and identity-checked
-  `CameraInstanceSet` contracts;
+- the `CameraDefinition`, `RasterModel`, and identity-checked camera model
+  contracts; collection and bundle ownership remain outside PlaCamera;
 - explicit image coordinates (`sample`, `line`) and typed ground frames;
 - one structured error contract for parsing, file IO, conversion, binding, and
   numerical evaluation, with source and optional line diagnostics;
@@ -67,8 +67,8 @@ migrated; see [docs/MIGRATION.md](docs/MIGRATION.md).
 
 ## Dependencies
 
-The runtime library requires a C++20 standard library and the dependency-free
-`placoordinate::types` target. PlaCamera aliases `FrameId`, `TimeScale`, and
+The runtime library requires a C++20 standard library, `plamatrix`, TinyXML2,
+and the `placoordinate::types` target. PlaCamera aliases `FrameId`, `TimeScale`, and
 `TimeReference` to PlaCoordinate's public types, so camera, control-point, SfM,
 DEM, DOM, and LiDAR code share one coordinate identity. CMake 3.21 or newer is
 required to build and install it. The optional `placamera::state` component
@@ -85,8 +85,8 @@ documented in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 The public API stays under `include/placamera/`. Implementations under `src/`
 are grouped by responsibility:
 
-- `model/` owns shared identities, capabilities, instance sets, optimization
-  contracts, and the model registry;
+- `model/` owns shared identities, capabilities, optimization contracts, and the
+  model registry;
 - `frame/`, `linescan/`, and `rpc/` own their model definitions, instances,
   numerical operations, and model-local `internal/` math;
 - `formats/` owns Tsai, COLMAP, dataset, and camera-project import;

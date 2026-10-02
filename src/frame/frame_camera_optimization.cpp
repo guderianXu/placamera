@@ -1,5 +1,7 @@
 #include "placamera/frame_camera.h"
 
+#include "../internal/plamatrix_rotation.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -14,51 +16,6 @@ namespace placamera
 
     namespace
     {
-
-        RotationMatrix multiplyRotation(const RotationMatrix& first, const RotationMatrix& second) noexcept
-        {
-            RotationMatrix result{};
-            for (int row = 0; row < 3; ++row)
-            {
-                for (int column = 0; column < 3; ++column)
-                {
-                    for (int index = 0; index < 3; ++index)
-                    {
-                        result[static_cast<std::size_t>(row * 3 + column)] +=
-                            first[static_cast<std::size_t>(row * 3 + index)] *
-                            second[static_cast<std::size_t>(index * 3 + column)];
-                    }
-                }
-            }
-            return result;
-        }
-
-        RotationMatrix rotationFromVector(double wx, double wy, double wz) noexcept
-        {
-            const double theta_squared = wx * wx + wy * wy + wz * wz;
-            if (theta_squared < 1.0e-20)
-            {
-                return {1.0, -wz, wy, wz, 1.0, -wx, -wy, wx, 1.0};
-            }
-
-            const double theta = std::sqrt(theta_squared);
-            const double sine_over_theta = std::sin(theta) / theta;
-            const double one_minus_cosine_over_theta_squared = (1.0 - std::cos(theta)) / theta_squared;
-            return {1.0 - one_minus_cosine_over_theta_squared * (wy * wy + wz * wz),
-                    one_minus_cosine_over_theta_squared * wx * wy - sine_over_theta * wz,
-                    one_minus_cosine_over_theta_squared * wx * wz + sine_over_theta * wy,
-                    one_minus_cosine_over_theta_squared * wx * wy + sine_over_theta * wz,
-                    1.0 - one_minus_cosine_over_theta_squared * (wx * wx + wz * wz),
-                    one_minus_cosine_over_theta_squared * wy * wz - sine_over_theta * wx,
-                    one_minus_cosine_over_theta_squared * wx * wz - sine_over_theta * wy,
-                    one_minus_cosine_over_theta_squared * wy * wz + sine_over_theta * wx,
-                    1.0 - one_minus_cosine_over_theta_squared * (wx * wx + wy * wy)};
-        }
-
-        RotationMatrix rotationFromDelta(const std::vector<double>& delta) noexcept
-        {
-            return rotationFromVector(delta[0], delta[1], delta[2]);
-        }
 
         void appendSelectedBlock(OptimizationLayout* layout,
                                  const FrameOptimizationSelection& selection,
@@ -358,7 +315,9 @@ namespace placamera
         try
         {
             const RotationMatrix rotation =
-                multiplyRotation(rotationFromDelta(update.delta), _pose.cameraToWorldRotation);
+                internal::multiply(internal::angleAxisRotation(
+                                       {update.delta[0], update.delta[1], update.delta[2]}),
+                                   _pose.cameraToWorldRotation);
             const Vector3 center{{_pose.center[0] + update.delta[3],
                                   _pose.center[1] + update.delta[4],
                                   _pose.center[2] + update.delta[5]}};
@@ -530,7 +489,8 @@ namespace placamera
                                                             _definition->sensorMount());
             }
             const RotationMatrix rotation =
-                multiplyRotation(rotationFromVector(rotation_x, rotation_y, rotation_z), _pose.cameraToWorldRotation);
+                internal::multiply(internal::angleAxisRotation({rotation_x, rotation_y, rotation_z}),
+                                   _pose.cameraToWorldRotation);
             auto model = FramePinholeModel::create(update.instanceId,
                                                    _imageId,
                                                    std::move(definition),

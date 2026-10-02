@@ -117,7 +117,8 @@ if (!projection)
 ```
 
 The returned `CameraModelPtr<CentralCameraModel>` can be copied cheaply and
-stored in `CameraInstanceSet`. Its pointed-to model cannot be mutated.
+stored in an application or PlaBundle-owned collection. Its pointed-to model
+cannot be mutated.
 Registry construction, state restoration, numeric-state promotion, RPC/ISD
 import, and `withOptimizationUpdate` use the same immutable shared ownership;
 callers do not need to wrap returned values in another smart pointer.
@@ -267,7 +268,7 @@ The import DTO has one source of truth for each concern:
   chooses coordinate and orientation conventions.
 
 See `examples/project_import.cpp` for a complete executable that binds imported
-frames and inserts them into a `CameraInstanceSet`.
+frames and keeps the resulting models in caller-owned storage.
 
 ## Select optimization parameters
 

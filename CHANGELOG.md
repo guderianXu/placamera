@@ -39,6 +39,12 @@
 
 ### Changed
 
+- Removed bundle linearization, rig-topology, and instance-set APIs from the
+  camera core; those collection and solver responsibilities belong to
+  PlaBundle or the application layer.
+- Centralized non-hot-path rotation validation, composition, and quaternion
+  conversion through PlaMatrix. Metashape XML now uses TinyXML2's DOM parser
+  with strict finite numeric conversion and namespace-tolerant element lookup.
 - Parsing, file IO, format conversion, reference resolution, and model binding
   now use the same result-inspection API instead of mixed booleans, optionals,
   output parameters, and error strings.

@@ -1,5 +1,7 @@
 #include "placamera/types.h"
 
+#include "../internal/plamatrix_rotation.h"
+
 #include <cmath>
 #include <utility>
 
@@ -23,27 +25,7 @@ namespace placamera
             }
         }
 
-        const auto dot_row = [&cameraToWorldRotation](int first, int second)
-        {
-            return cameraToWorldRotation[static_cast<std::size_t>(first)] *
-                       cameraToWorldRotation[static_cast<std::size_t>(second)] +
-                   cameraToWorldRotation[static_cast<std::size_t>(first + 1)] *
-                       cameraToWorldRotation[static_cast<std::size_t>(second + 1)] +
-                   cameraToWorldRotation[static_cast<std::size_t>(first + 2)] *
-                       cameraToWorldRotation[static_cast<std::size_t>(second + 2)];
-        };
-        const double determinant = cameraToWorldRotation[0] * (cameraToWorldRotation[4] * cameraToWorldRotation[8] -
-                                                               cameraToWorldRotation[5] * cameraToWorldRotation[7]) -
-                                   cameraToWorldRotation[1] * (cameraToWorldRotation[3] * cameraToWorldRotation[8] -
-                                                               cameraToWorldRotation[5] * cameraToWorldRotation[6]) +
-                                   cameraToWorldRotation[2] * (cameraToWorldRotation[3] * cameraToWorldRotation[7] -
-                                                               cameraToWorldRotation[4] * cameraToWorldRotation[6]);
-
-        constexpr double tolerance = 1.0e-8;
-        if (std::abs(dot_row(0, 0) - 1.0) > tolerance || std::abs(dot_row(3, 3) - 1.0) > tolerance ||
-            std::abs(dot_row(6, 6) - 1.0) > tolerance || std::abs(dot_row(0, 3)) > tolerance ||
-            std::abs(dot_row(0, 6)) > tolerance || std::abs(dot_row(3, 6)) > tolerance ||
-            std::abs(determinant - 1.0) > tolerance)
+        if (!internal::validRotation(cameraToWorldRotation))
         {
             throw CameraValidationError(CameraErrorCode::InvalidPose,
                                         "pose rotation must be a proper orthonormal matrix");

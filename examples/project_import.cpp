@@ -1,5 +1,4 @@
 #include <placamera/formats.h>
-#include <placamera/instance_set.h>
 
 #include <filesystem>
 #include <iostream>
@@ -22,7 +21,7 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    placamera::CameraInstanceSet models;
+    std::size_t imported_count = 0;
     std::size_t skipped = 0;
     for (std::size_t index = 0; index < project->cameras.size(); ++index)
     {
@@ -63,14 +62,9 @@ int main(int argc, char** argv)
             std::cerr << imported.imageName << ": " << model.message() << '\n';
             return 4;
         }
-        const auto added = models.add(model.takeValue());
-        if (!added)
-        {
-            std::cerr << imported.imageName << ": " << added.message() << '\n';
-            return 5;
-        }
+        ++imported_count;
     }
 
-    std::cout << "imported " << models.size() << " frame cameras; skipped " << skipped << '\n';
+    std::cout << "imported " << imported_count << " frame cameras; skipped " << skipped << '\n';
     return 0;
 }

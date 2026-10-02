@@ -1,5 +1,7 @@
 #include "placamera/linescan_numeric_state.h"
 
+#include "../internal/plamatrix_rotation.h"
+
 #include <algorithm>
 #include <cmath>
 #include <iterator>
@@ -9,49 +11,6 @@ namespace placamera
 {
     namespace
     {
-        RotationMatrix multiplyRotation(const RotationMatrix& first, const RotationMatrix& second) noexcept
-        {
-            RotationMatrix result{};
-            for (int row = 0; row < 3; ++row)
-            {
-                for (int column = 0; column < 3; ++column)
-                {
-                    for (int inner = 0; inner < 3; ++inner)
-                    {
-                        result[static_cast<std::size_t>(row * 3 + column)] +=
-                            first[static_cast<std::size_t>(row * 3 + inner)] *
-                            second[static_cast<std::size_t>(inner * 3 + column)];
-                    }
-                }
-            }
-            return result;
-        }
-
-        RotationMatrix angleAxisRotation(const Vector3& rotation) noexcept
-        {
-            const double angle_squared =
-                rotation[0] * rotation[0] + rotation[1] * rotation[1] + rotation[2] * rotation[2];
-            if (angle_squared < 1.0e-20)
-            {
-                return {1.0, -rotation[2], rotation[1], rotation[2], 1.0, -rotation[0], -rotation[1], rotation[0], 1.0};
-            }
-            const double angle = std::sqrt(angle_squared);
-            const double sine_over_angle = std::sin(angle) / angle;
-            const double one_minus_cosine_over_angle_squared = (1.0 - std::cos(angle)) / angle_squared;
-            const double x = rotation[0];
-            const double y = rotation[1];
-            const double z = rotation[2];
-            return {1.0 - one_minus_cosine_over_angle_squared * (y * y + z * z),
-                    one_minus_cosine_over_angle_squared * x * y - sine_over_angle * z,
-                    one_minus_cosine_over_angle_squared * x * z + sine_over_angle * y,
-                    one_minus_cosine_over_angle_squared * x * y + sine_over_angle * z,
-                    1.0 - one_minus_cosine_over_angle_squared * (x * x + z * z),
-                    one_minus_cosine_over_angle_squared * y * z - sine_over_angle * x,
-                    one_minus_cosine_over_angle_squared * x * z - sine_over_angle * y,
-                    one_minus_cosine_over_angle_squared * y * z + sine_over_angle * x,
-                    1.0 - one_minus_cosine_over_angle_squared * (x * x + y * y)};
-        }
-
         bool validOptics(const LineScanOptics& optics) noexcept
         {
             if (!std::isfinite(optics.focalLengthMillimeters) || !(optics.focalLengthMillimeters > 0.0) ||
@@ -275,8 +234,8 @@ namespace placamera
                 {
                     value += delta[cursor++];
                 }
-                _samples[index].cameraToWorldRotation = multiplyRotation(angleAxisRotation(_rotationDeltas[index]),
-                                                                         _nominalSamples[index].cameraToWorldRotation);
+                _samples[index].cameraToWorldRotation = internal::multiply(
+                    internal::angleAxisRotation(_rotationDeltas[index]), _nominalSamples[index].cameraToWorldRotation);
             }
         }
         _bias = next_bias;

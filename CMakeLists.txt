@@ -29,6 +29,14 @@ option(PLACAMERA_INSTALL "Generate PlaCamera install rules" ${PROJECT_IS_TOP_LEV
 if(NOT TARGET placoordinate::types)
     find_package(placoordinate 0.1 CONFIG REQUIRED COMPONENTS types)
 endif()
+if(NOT TARGET plamatrix::plamatrix)
+    find_package(plamatrix CONFIG REQUIRED)
+endif()
+find_package(tinyxml2 CONFIG REQUIRED)
+if(MSVC)
+    set(OpenMP_CXX_FLAGS "/openmp:experimental" CACHE STRING "OpenMP C++ flags with SIMD support on MSVC")
+endif()
+find_package(OpenMP REQUIRED COMPONENTS CXX)
 
 configure_file(
     include/placamera/version.h.in
@@ -38,21 +46,17 @@ configure_file(
 
 add_library(placamera STATIC
     src/model/capabilities.cpp
-    src/model/instance_set.cpp
     src/model/model.cpp
     src/model/optimization.cpp
     src/model/registry.cpp
     src/model/types.cpp
     src/frame/camera_baseline.cpp
     src/frame/camera_topology.cpp
-    src/frame/frame_bundle_linearization.cpp
     src/frame/frame_camera_definition.cpp
     src/frame/frame_camera_model.cpp
     src/frame/frame_camera_optimization.cpp
     src/frame/frame_numeric_state.cpp
-    src/frame/rig_topology.cpp
     src/frame/internal/frame_camera_math.cpp
-    src/linescan/linescan_bundle_linearization.cpp
     src/linescan/linescan_camera_definition.cpp
     src/linescan/linescan_camera_model.cpp
     src/linescan/linescan_numeric_evaluation.cpp
@@ -80,7 +84,9 @@ add_library(placamera STATIC
 add_library(placamera::placamera ALIAS placamera)
 
 target_compile_features(placamera PUBLIC cxx_std_20)
-target_link_libraries(placamera PUBLIC placoordinate::types)
+target_link_libraries(placamera
+    PUBLIC placoordinate::types
+    PRIVATE plamatrix::plamatrix tinyxml2::tinyxml2 OpenMP::OpenMP_CXX)
 target_include_directories(placamera
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

@@ -152,15 +152,9 @@ namespace placamera::internal
             const double x = q[1];
             const double y = q[2];
             const double z = q[3];
-            return {1.0 - 2.0 * (y * y + z * z),
-                    2.0 * (x * y - z * w),
-                    2.0 * (x * z + y * w),
-                    2.0 * (x * y + z * w),
-                    1.0 - 2.0 * (x * x + z * z),
-                    2.0 * (y * z - x * w),
-                    2.0 * (x * z - y * w),
-                    2.0 * (y * z + x * w),
-                    1.0 - 2.0 * (x * x + y * y)};
+            return {1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w),
+                    2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w),
+                    2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)};
         }
 
         Quaternion slerp(Quaternion first, Quaternion second, double fraction) noexcept
@@ -188,9 +182,9 @@ namespace placamera::internal
             }
             const double angle = std::acos(dot);
             const double sine = std::sin(angle);
+            Quaternion result{};
             const double first_weight = std::sin((1.0 - fraction) * angle) / sine;
             const double second_weight = std::sin(fraction * angle) / sine;
-            Quaternion result{};
             for (std::size_t index = 0; index < result.size(); ++index)
             {
                 result[index] = first_weight * first[index] + second_weight * second[index];
@@ -230,9 +224,8 @@ namespace placamera::internal
                 {
                     (*center)[axis] = first.center[axis] + fraction * (second.center[axis] - first.center[axis]);
                 }
-                *cameraToWorld = quaternionToMatrix(slerp(matrixToQuaternion(first.cameraToWorldRotation),
-                                                          matrixToQuaternion(second.cameraToWorldRotation),
-                                                          fraction));
+                *cameraToWorld = quaternionToMatrix(
+                    slerp(matrixToQuaternion(first.cameraToWorldRotation), matrixToQuaternion(second.cameraToWorldRotation), fraction));
             }
             const auto& bias = state.trajectoryBias();
             for (std::size_t axis = 0; axis < 3; ++axis)

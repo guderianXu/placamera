@@ -11,7 +11,6 @@ add_executable(test_placamera
     public_header_frame_camera.cpp
     public_header_formats.cpp
     public_header_frame_numeric_state.cpp
-    public_header_instance_set.cpp
     public_header_isd.cpp
     public_header_linescan_camera.cpp
     public_header_linescan_numeric_state.cpp
@@ -32,11 +31,9 @@ add_executable(test_placamera
     test_frame_camera.cpp
     test_camera_baseline.cpp
     test_camera_topology.cpp
-    test_bundle_linearization.cpp
     test_colmap.cpp
     test_dataset_formats.cpp
     test_frame_numeric_state.cpp
-    test_instance_set.cpp
     test_linescan_camera.cpp
     test_linescan_numeric_state.cpp
     test_optimization.cpp

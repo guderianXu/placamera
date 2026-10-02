@@ -2,6 +2,9 @@
 
 include(CMakeFindDependencyMacro)
 find_dependency(placoordinate 0.1 CONFIG REQUIRED COMPONENTS types)
+find_dependency(plamatrix CONFIG REQUIRED)
+find_dependency(tinyxml2 CONFIG REQUIRED)
+find_dependency(OpenMP REQUIRED COMPONENTS CXX)
 
 include("${CMAKE_CURRENT_LIST_DIR}/placameraTargets.cmake")
 set(placamera_core_FOUND TRUE)
