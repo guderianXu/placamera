@@ -33,6 +33,9 @@
   longitude/latitude/height deltas.
 - Canonical pose covariance validation and rigid/Sim(3) propagation, plus a
   Metashape YPR-degree covariance adapter.
+- Analytic RPC projection Jacobians, Jacobian-backed fixed-height inversion,
+  and an analytic-derivative path for RPC stereo intersection with an explicit
+  finite-difference fallback.
 
 ### Changed
 

@@ -498,6 +498,13 @@ as the six normalized-image coefficients. Optimization layout and state JSON
 also follow the selected domain. See `examples/rpc_correction.cpp` for a
 complete executable.
 
+RPC models also expose `groundToImageJacobian()`, an analytic 2x3 Jacobian
+whose columns are longitude in degrees, latitude in degrees, and ellipsoidal
+height in metres. Fixed-height RPC inversion uses this Jacobian directly. RPC
+stereo intersection uses the same analytic projection derivatives by default;
+set `RpcIntersectionOptions::useAnalyticJacobian` to `false` to retain the
+finite-difference path for comparisons or diagnostics.
+
 ## RPC raster import
 
 The optional `placamera::gdal` component reads RPC00B metadata and raster size

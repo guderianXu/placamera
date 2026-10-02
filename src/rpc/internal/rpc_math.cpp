@@ -42,6 +42,25 @@ namespace placamera
                      height2 * height}};
         }
 
+        std::array<RpcCoefficients, 3>
+        polynomialTermDerivatives(double longitude, double latitude, double height) noexcept
+        {
+            const double longitude2 = longitude * longitude;
+            const double latitude2 = latitude * latitude;
+            const double height2 = height * height;
+            std::array<RpcCoefficients, 3> derivatives{};
+            derivatives[0] = {{0.0, 1.0, 0.0, 0.0, latitude, height, 0.0, 2.0 * longitude, 0.0, 0.0,
+                               latitude * height, 3.0 * longitude2, latitude2, height2,
+                               2.0 * longitude * latitude, 0.0, 0.0, 2.0 * longitude * height, 0.0, 0.0}};
+            derivatives[1] = {{0.0, 0.0, 1.0, 0.0, longitude, 0.0, height, 0.0, 2.0 * latitude, 0.0,
+                               longitude * height, 0.0, 2.0 * longitude * latitude, 0.0, longitude2,
+                               3.0 * latitude2, height2, 0.0, 2.0 * latitude * height, 0.0}};
+            derivatives[2] = {{0.0, 0.0, 0.0, 1.0, 0.0, longitude, latitude, 0.0, 0.0, 2.0 * height,
+                               longitude * latitude, 0.0, 0.0, 2.0 * longitude * height, 0.0, 0.0,
+                               2.0 * latitude * height, longitude2, latitude2, 3.0 * height2}};
+            return derivatives;
+        }
+
         double dot(const RpcCoefficients& first, const RpcCoefficients& second) noexcept
         {
             double result = 0.0;
@@ -50,6 +69,13 @@ namespace placamera
                 result += first[index] * second[index];
             }
             return result;
+        }
+
+        double derivativeDot(const RpcCoefficients& coefficients,
+                             const std::array<RpcCoefficients, 3>& derivatives,
+                             int axis) noexcept
+        {
+            return dot(coefficients, derivatives[static_cast<std::size_t>(axis)]);
         }
 
         double longitudeDifference(double longitude, double reference) noexcept
@@ -185,6 +211,103 @@ namespace placamera
             return EvaluationResult<ImageCoordinate>::success(image);
         }
 
+        EvaluationResult<RpcProjectionJacobian> jacobianRpc(const RpcDefinition& definition,
+                                                            const RpcCorrection& correction,
+                                                            const GeodeticCoordinate& ground,
+                                                            bool applyCorrection)
+        {
+            if (!finite(ground.longitudeDegrees) || !finite(ground.latitudeDegrees) ||
+                !finite(ground.heightMeters) || ground.latitudeDegrees < -90.0 || ground.latitudeDegrees > 90.0)
+            {
+                return EvaluationResult<RpcProjectionJacobian>::failure(
+                    CameraErrorCode::InvalidArgument, "RPC geodetic coordinate is invalid");
+            }
+
+            const RpcParameters& parameters = definition.parameters();
+            const double normalized_longitude =
+                longitudeDifference(ground.longitudeDegrees, parameters.longitudeOffset) / parameters.longitudeScale;
+            const double normalized_latitude =
+                (ground.latitudeDegrees - parameters.latitudeOffset) / parameters.latitudeScale;
+            const double normalized_height =
+                (ground.heightMeters - parameters.heightOffset) / parameters.heightScale;
+            if (!finite(normalized_longitude) || !finite(normalized_latitude) || !finite(normalized_height))
+            {
+                return EvaluationResult<RpcProjectionJacobian>::failure(
+                    CameraErrorCode::OutsideModelDomain, "RPC normalization produced a non-finite coordinate");
+            }
+
+            const RpcCoefficients terms =
+                polynomialTerms(normalized_longitude, normalized_latitude, normalized_height);
+            const auto derivatives =
+                polynomialTermDerivatives(normalized_longitude, normalized_latitude, normalized_height);
+            const double line_numerator = dot(parameters.lineNumerator, terms);
+            const double line_denominator = dot(parameters.lineDenominator, terms);
+            const double sample_numerator = dot(parameters.sampleNumerator, terms);
+            const double sample_denominator = dot(parameters.sampleDenominator, terms);
+            if (!finite(line_numerator) || !finite(line_denominator) || !finite(sample_numerator) ||
+                !finite(sample_denominator) || std::abs(line_denominator) < kDenominatorEpsilon ||
+                std::abs(sample_denominator) < kDenominatorEpsilon)
+            {
+                return EvaluationResult<RpcProjectionJacobian>::failure(
+                    CameraErrorCode::OutsideModelDomain, "RPC polynomial is singular or non-finite");
+            }
+
+            std::array<double, 3> sample{};
+            std::array<double, 3> line{};
+            std::array<double, 3> normalized_sample{};
+            std::array<double, 3> normalized_line{};
+            const std::array<double, 3> normalizationScales{
+                parameters.longitudeScale, parameters.latitudeScale, parameters.heightScale};
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const double sample_derivative =
+                    (derivativeDot(parameters.sampleNumerator, derivatives, axis) * sample_denominator -
+                     sample_numerator * derivativeDot(parameters.sampleDenominator, derivatives, axis)) /
+                    (sample_denominator * sample_denominator);
+                const double line_derivative =
+                    (derivativeDot(parameters.lineNumerator, derivatives, axis) * line_denominator -
+                     line_numerator * derivativeDot(parameters.lineDenominator, derivatives, axis)) /
+                    (line_denominator * line_denominator);
+                normalized_sample[axis] = sample_derivative / normalizationScales[static_cast<std::size_t>(axis)];
+                normalized_line[axis] = line_derivative / normalizationScales[static_cast<std::size_t>(axis)];
+                sample[axis] = parameters.sampleScale * normalized_sample[axis];
+                line[axis] = parameters.lineScale * normalized_line[axis];
+            }
+
+            if (applyCorrection)
+            {
+                if (const RpcImageCorrection* image_correction = correction.normalizedImageValue())
+                {
+                    for (int axis = 0; axis < 3; ++axis)
+                    {
+                        sample[axis] += image_correction->sampleSamplePixels * normalized_sample[axis] +
+                                        image_correction->sampleLinePixels * normalized_line[axis];
+                        line[axis] += image_correction->lineSamplePixels * normalized_sample[axis] +
+                                      image_correction->lineLinePixels * normalized_line[axis];
+                    }
+                }
+                else if (const RpcGroundCorrection* ground_correction = correction.groundCoordinateValue())
+                {
+                    sample[0] += ground_correction->sampleLongitudePixelsPerDegree;
+                    sample[1] += ground_correction->sampleLatitudePixelsPerDegree;
+                    sample[2] += ground_correction->sampleHeightPixelsPerMeter;
+                    line[0] += ground_correction->lineLongitudePixelsPerDegree;
+                    line[1] += ground_correction->lineLatitudePixelsPerDegree;
+                    line[2] += ground_correction->lineHeightPixelsPerMeter;
+                }
+            }
+
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                if (!finite(sample[axis]) || !finite(line[axis]))
+                {
+                    return EvaluationResult<RpcProjectionJacobian>::failure(
+                        CameraErrorCode::OutsideModelDomain, "RPC projection Jacobian is non-finite");
+                }
+            }
+            return EvaluationResult<RpcProjectionJacobian>::success(RpcProjectionJacobian{sample, line});
+        }
+
         EvaluationResult<GeodeticCoordinate> invertRpcAtHeight(const RpcDefinition& definition,
                                                                const RpcCorrection& correction,
                                                                const ImageCoordinate& image,
@@ -205,8 +328,6 @@ namespace placamera
                 (ellipsoidalHeightMeters - parameters.heightOffset) / parameters.heightScale;
             double normalized_longitude = 0.0;
             double normalized_latitude = 0.0;
-            constexpr double derivative_step = 1.0e-6;
-
             for (int iteration = 0; iteration < options.maximumIterations; ++iteration)
             {
                 ImageCoordinate current;
@@ -236,49 +357,21 @@ namespace placamera
                     return EvaluationResult<GeodeticCoordinate>::success(ground, current_error);
                 }
 
-                ImageCoordinate longitude_plus;
-                ImageCoordinate longitude_minus;
-                ImageCoordinate latitude_plus;
-                ImageCoordinate latitude_minus;
-                if (!evaluate(definition,
-                              correction,
-                              normalized_longitude + derivative_step,
-                              normalized_latitude,
-                              normalized_height,
-                              true,
-                              &longitude_plus) ||
-                    !evaluate(definition,
-                              correction,
-                              normalized_longitude - derivative_step,
-                              normalized_latitude,
-                              normalized_height,
-                              true,
-                              &longitude_minus) ||
-                    !evaluate(definition,
-                              correction,
-                              normalized_longitude,
-                              normalized_latitude + derivative_step,
-                              normalized_height,
-                              true,
-                              &latitude_plus) ||
-                    !evaluate(definition,
-                              correction,
-                              normalized_longitude,
-                              normalized_latitude - derivative_step,
-                              normalized_height,
-                              true,
-                              &latitude_minus))
+                const GeodeticCoordinate current_ground{
+                    parameters.longitudeOffset + normalized_longitude * parameters.longitudeScale,
+                    parameters.latitudeOffset + normalized_latitude * parameters.latitudeScale,
+                    ellipsoidalHeightMeters};
+                const auto jacobian = jacobianRpc(definition, correction, current_ground, true);
+                if (!jacobian)
                 {
                     break;
                 }
 
                 const double d_sample_d_longitude =
-                    (longitude_plus.sample - longitude_minus.sample) / (2.0 * derivative_step);
-                const double d_line_d_longitude =
-                    (longitude_plus.line - longitude_minus.line) / (2.0 * derivative_step);
-                const double d_sample_d_latitude =
-                    (latitude_plus.sample - latitude_minus.sample) / (2.0 * derivative_step);
-                const double d_line_d_latitude = (latitude_plus.line - latitude_minus.line) / (2.0 * derivative_step);
+                    jacobian.value().sample[0] * parameters.longitudeScale;
+                const double d_line_d_longitude = jacobian.value().line[0] * parameters.longitudeScale;
+                const double d_sample_d_latitude = jacobian.value().sample[1] * parameters.latitudeScale;
+                const double d_line_d_latitude = jacobian.value().line[1] * parameters.latitudeScale;
                 const double determinant =
                     d_sample_d_longitude * d_line_d_latitude - d_sample_d_latitude * d_line_d_longitude;
                 if (!finite(determinant) || std::abs(determinant) < 1.0e-12)

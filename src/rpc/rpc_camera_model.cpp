@@ -271,6 +271,17 @@ namespace placamera
                                                      image.achievedPrecisionPixels());
     }
 
+    EvaluationResult<RpcProjectionJacobian>
+    RpcModel::groundToImageJacobian(const GeodeticCoordinate& ground, const EvaluationOptions& options) const
+    {
+        if (!validOptions(options))
+        {
+            return EvaluationResult<RpcProjectionJacobian>::failure(
+                CameraErrorCode::InvalidArgument, "RPC evaluation options must be finite and positive");
+        }
+        return internal::jacobianRpc(*_definition, _correction, ground, true);
+    }
+
     EvaluationResult<GeodeticCoordinate> RpcModel::imageToGroundAtHeight(const ImageCoordinate& image,
                                                                          double ellipsoidalHeightMeters,
                                                                          const EvaluationOptions& options) const

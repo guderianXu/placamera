@@ -101,6 +101,14 @@ namespace
         EXPECT_NEAR(intersection.value().geodetic.latitudeDegrees, expected.latitudeDegrees, 1.0e-8);
         EXPECT_NEAR(intersection.value().geodetic.heightMeters, expected.heightMeters, 1.0e-3);
         EXPECT_LT(intersection.value().reprojectionRmsPixels, options.pixelTolerance);
+
+        options.useAnalyticJacobian = false;
+        const auto finite_difference_intersection =
+            intersectRpc(first, first_image.value().image, second, second_image.value().image, options);
+        ASSERT_TRUE(finite_difference_intersection) << finite_difference_intersection.message();
+        EXPECT_NEAR(finite_difference_intersection.value().geodetic.longitudeDegrees,
+                    expected.longitudeDegrees,
+                    1.0e-8);
     }
 
     TEST(RpcIntersectionTest, RejectsMismatchedFramesAndDegenerateControlSets)

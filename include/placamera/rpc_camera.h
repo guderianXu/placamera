@@ -70,6 +70,15 @@ namespace placamera
         double lineHeightPixelsPerMeter = 0.0;
     };
 
+    /** First-order image sensitivity with respect to longitude, latitude, and height. */
+    struct RpcProjectionJacobian
+    {
+        // Derivatives are ordered as longitude (degrees), latitude (degrees),
+        // and ellipsoidal height (metres).
+        std::array<double, 3> sample{};
+        std::array<double, 3> line{};
+    };
+
     enum class RpcCorrectionDomain
     {
         NormalizedImage,
@@ -179,6 +188,11 @@ namespace placamera
 
         EvaluationResult<Projection> groundToImageGeodetic(const GeodeticCoordinate& ground,
                                                            const EvaluationOptions& options = {}) const;
+
+        /** Analytic Jacobian of the corrected RPC projection in geodetic units. */
+        EvaluationResult<RpcProjectionJacobian>
+        groundToImageJacobian(const GeodeticCoordinate& ground,
+                              const EvaluationOptions& options = {}) const;
 
         EvaluationResult<GeodeticCoordinate> imageToGroundAtHeight(const ImageCoordinate& image,
                                                                    double ellipsoidalHeightMeters,

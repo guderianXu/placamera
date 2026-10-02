@@ -88,6 +88,65 @@ namespace placamera
                   secondImage.line - second_projection.value().image.line}});
         }
 
+        EvaluationResult<std::array<std::array<double, 3>, 4>> analyticCartesianJacobian(
+            const RpcModel& first,
+            const RpcModel& second,
+            const Vector3& point,
+            double derivativeStepMeters)
+        {
+            const auto geodetic = cartesianToGeodetic(point, first.rpcDefinition().ellipsoid());
+            if (!geodetic)
+            {
+                return EvaluationResult<std::array<std::array<double, 3>, 4>>::failure(
+                    geodetic.errorCode(), geodetic.message());
+            }
+            const auto first_jacobian = first.groundToImageJacobian(geodetic.value());
+            const auto second_jacobian = second.groundToImageJacobian(geodetic.value());
+            if (!first_jacobian || !second_jacobian)
+            {
+                return EvaluationResult<std::array<std::array<double, 3>, 4>>::failure(
+                    CameraErrorCode::OutsideModelDomain,
+                    "RPC analytic projection Jacobian could not be evaluated");
+            }
+
+            std::array<std::array<double, 3>, 4> jacobian{};
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                Vector3 plus = point;
+                Vector3 minus = point;
+                plus[axis] += derivativeStepMeters;
+                minus[axis] -= derivativeStepMeters;
+                const auto geodetic_plus = cartesianToGeodetic(plus, first.rpcDefinition().ellipsoid());
+                const auto geodetic_minus = cartesianToGeodetic(minus, first.rpcDefinition().ellipsoid());
+                if (!geodetic_plus || !geodetic_minus)
+                {
+                    return EvaluationResult<std::array<std::array<double, 3>, 4>>::failure(
+                        CameraErrorCode::OutsideModelDomain,
+                        "RPC geodetic conversion failed while forming the analytic Jacobian");
+                }
+                const std::array<double, 3> geodetic_derivative{
+                    (geodetic_plus.value().longitudeDegrees - geodetic_minus.value().longitudeDegrees) /
+                        (2.0 * derivativeStepMeters),
+                    (geodetic_plus.value().latitudeDegrees - geodetic_minus.value().latitudeDegrees) /
+                        (2.0 * derivativeStepMeters),
+                    (geodetic_plus.value().heightMeters - geodetic_minus.value().heightMeters) /
+                        (2.0 * derivativeStepMeters)};
+                jacobian[0][axis] = -(first_jacobian.value().sample[0] * geodetic_derivative[0] +
+                                       first_jacobian.value().sample[1] * geodetic_derivative[1] +
+                                       first_jacobian.value().sample[2] * geodetic_derivative[2]);
+                jacobian[1][axis] = -(first_jacobian.value().line[0] * geodetic_derivative[0] +
+                                       first_jacobian.value().line[1] * geodetic_derivative[1] +
+                                       first_jacobian.value().line[2] * geodetic_derivative[2]);
+                jacobian[2][axis] = -(second_jacobian.value().sample[0] * geodetic_derivative[0] +
+                                       second_jacobian.value().sample[1] * geodetic_derivative[1] +
+                                       second_jacobian.value().sample[2] * geodetic_derivative[2]);
+                jacobian[3][axis] = -(second_jacobian.value().line[0] * geodetic_derivative[0] +
+                                       second_jacobian.value().line[1] * geodetic_derivative[1] +
+                                       second_jacobian.value().line[2] * geodetic_derivative[2]);
+            }
+            return EvaluationResult<std::array<std::array<double, 3>, 4>>::success(jacobian);
+        }
+
         bool solve3x3(double matrix[3][3], double rightHandSide[3], Vector3* solution) noexcept
         {
             double augmented[3][4]{};
@@ -212,27 +271,41 @@ namespace placamera
                 return EvaluationResult<RpcIntersectionResult>::success(result, current_rms);
             }
 
-            double jacobian[4][3]{};
-            for (int axis = 0; axis < 3; ++axis)
+            std::array<std::array<double, 3>, 4> jacobian{};
+            if (options.useAnalyticJacobian)
             {
-                Vector3 plus = point;
-                Vector3 minus = point;
-                plus[axis] += options.derivativeStepMeters;
-                minus[axis] -= options.derivativeStepMeters;
-                const auto plus_residuals =
-                    rpcResiduals(first, firstImage, second, secondImage, plus, evaluation_options);
-                const auto minus_residuals =
-                    rpcResiduals(first, firstImage, second, secondImage, minus, evaluation_options);
-                if (!plus_residuals || !minus_residuals)
+                const auto analytic =
+                    analyticCartesianJacobian(first, second, point, options.derivativeStepMeters);
+                if (!analytic)
                 {
                     return EvaluationResult<RpcIntersectionResult>::failure(
-                        CameraErrorCode::OutsideModelDomain,
-                        "RPC stereo derivatives could not be evaluated around the current point");
+                        analytic.errorCode(), analytic.message());
                 }
-                for (int row = 0; row < 4; ++row)
+                jacobian = analytic.value();
+            }
+            else
+            {
+                for (int axis = 0; axis < 3; ++axis)
                 {
-                    jacobian[row][axis] = (plus_residuals.value()[row] - minus_residuals.value()[row]) /
-                                          (2.0 * options.derivativeStepMeters);
+                    Vector3 plus = point;
+                    Vector3 minus = point;
+                    plus[axis] += options.derivativeStepMeters;
+                    minus[axis] -= options.derivativeStepMeters;
+                    const auto plus_residuals =
+                        rpcResiduals(first, firstImage, second, secondImage, plus, evaluation_options);
+                    const auto minus_residuals =
+                        rpcResiduals(first, firstImage, second, secondImage, minus, evaluation_options);
+                    if (!plus_residuals || !minus_residuals)
+                    {
+                        return EvaluationResult<RpcIntersectionResult>::failure(
+                            CameraErrorCode::OutsideModelDomain,
+                            "RPC stereo derivatives could not be evaluated around the current point");
+                    }
+                    for (int row = 0; row < 4; ++row)
+                    {
+                        jacobian[row][axis] = (plus_residuals.value()[row] - minus_residuals.value()[row]) /
+                                              (2.0 * options.derivativeStepMeters);
+                    }
                 }
             }
 

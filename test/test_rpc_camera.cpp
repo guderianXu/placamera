@@ -110,6 +110,73 @@ namespace
         EXPECT_NEAR(projected.value().image.line, 299.475, 1.0e-9);
     }
 
+    TEST(RpcModelTest, ProvidesAnalyticGeodeticJacobianIncludingCorrection)
+    {
+        RpcImageCorrection correction;
+        correction.sampleSamplePixels = 3.0;
+        correction.sampleLinePixels = -4.0;
+        correction.lineSamplePixels = 5.0;
+        correction.lineLinePixels = 2.0;
+        const RpcModel model = makeModel(makeDefinition(), correction);
+        const GeodeticCoordinate ground{110.01, 19.98, 1300.0};
+        const auto jacobian = model.groundToImageJacobian(ground);
+        ASSERT_TRUE(jacobian) << jacobian.message();
+
+        EXPECT_NEAR(jacobian.value().sample[0], 10030.0, 1.0e-8);
+        EXPECT_NEAR(jacobian.value().sample[1], -40.0, 1.0e-8);
+        EXPECT_NEAR(jacobian.value().sample[2], 0.25075, 1.0e-10);
+        EXPECT_NEAR(jacobian.value().line[0], 50.0, 1.0e-8);
+        EXPECT_NEAR(jacobian.value().line[1], 10020.0, 1.0e-8);
+        EXPECT_NEAR(jacobian.value().line[2], 0.00125, 1.0e-10);
+    }
+
+    TEST(RpcModelTest, AnalyticJacobianMatchesFiniteDifferenceForRationalTerms)
+    {
+        RpcParameters parameters = makeDefinition()->parameters();
+        parameters.sampleDenominator[1] = 0.02;
+        parameters.lineDenominator[2] = -0.01;
+        const auto definition = RpcDefinition::create(
+            CameraDefinitionId("rational-rpc-definition"), FrameId("wgs84-ecef"), parameters);
+        const RpcModel model = makeModel(definition);
+        const GeodeticCoordinate ground{110.01, 19.98, 1300.0};
+        const auto analytic = model.groundToImageJacobian(ground);
+        ASSERT_TRUE(analytic) << analytic.message();
+
+        const std::array<double, 3> steps{{1.0e-6, 1.0e-6, 1.0e-2}};
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            GeodeticCoordinate plus = ground;
+            GeodeticCoordinate minus = ground;
+            if (axis == 0)
+            {
+                plus.longitudeDegrees += steps[axis];
+                minus.longitudeDegrees -= steps[axis];
+            }
+            else if (axis == 1)
+            {
+                plus.latitudeDegrees += steps[axis];
+                minus.latitudeDegrees -= steps[axis];
+            }
+            else
+            {
+                plus.heightMeters += steps[axis];
+                minus.heightMeters -= steps[axis];
+            }
+            const auto plus_image = model.groundToImageGeodetic(plus);
+            const auto minus_image = model.groundToImageGeodetic(minus);
+            ASSERT_TRUE(plus_image) << plus_image.message();
+            ASSERT_TRUE(minus_image) << minus_image.message();
+            EXPECT_NEAR(analytic.value().sample[axis],
+                        (plus_image.value().image.sample - minus_image.value().image.sample) /
+                            (2.0 * steps[axis]),
+                        axis == 2 ? 1.0e-8 : 1.0e-4);
+            EXPECT_NEAR(analytic.value().line[axis],
+                        (plus_image.value().image.line - minus_image.value().image.line) /
+                            (2.0 * steps[axis]),
+                        axis == 2 ? 1.0e-8 : 1.0e-4);
+        }
+    }
+
     TEST(RpcModelTest, AppliesPhysicalGroundDomainAffineCorrection)
     {
         RpcGroundCorrection correction;

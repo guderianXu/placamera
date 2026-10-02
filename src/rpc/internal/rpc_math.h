@@ -10,6 +10,11 @@ namespace placamera::internal
                                                  const GeodeticCoordinate& ground,
                                                  bool applyCorrection);
 
+    EvaluationResult<RpcProjectionJacobian> jacobianRpc(const RpcDefinition& definition,
+                                                        const RpcCorrection& correction,
+                                                        const GeodeticCoordinate& ground,
+                                                        bool applyCorrection);
+
     EvaluationResult<GeodeticCoordinate> invertRpcAtHeight(const RpcDefinition& definition,
                                                            const RpcCorrection& correction,
                                                            const ImageCoordinate& image,

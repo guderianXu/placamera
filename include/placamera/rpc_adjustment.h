@@ -50,6 +50,7 @@ namespace placamera
         double positionToleranceMeters = 1.0e-3;
         double derivativeStepMeters = 0.5;
         int maximumIterations = 30;
+        bool useAnalyticJacobian = true;
     };
 
     struct RpcIntersectionResult
