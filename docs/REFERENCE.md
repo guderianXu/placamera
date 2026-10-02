@@ -6,6 +6,13 @@
 or directory. `importMetashapeDocument(xml)` accepts a document extracted from
 `chunk.zip` by an application; PlaCamera itself does not link a ZIP library.
 
+Metashape XML input accepts UTF-8 (with or without a UTF-8 BOM) and UTF-16 with
+either a little-endian or big-endian BOM. UTF-16 is converted to UTF-8 before
+the camera records are parsed. Invalid UTF-8, incomplete UTF-16 code units, and
+unpaired UTF-16 surrogates return a `ParseFailure`; bytes are never reinterpreted
+using the host Windows code page. Metashape camera-reference TXT uses UTF-8 and
+also accepts a UTF-8 BOM.
+
 The result has two separate collections:
 
 - `cameras[].calibration` contains the normalized pixel matrix,

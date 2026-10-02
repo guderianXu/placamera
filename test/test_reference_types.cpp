@@ -15,9 +15,9 @@ namespace
 
     TEST(CameraReferenceTypesTest, RejectsEmptyStrongIds)
     {
-        EXPECT_THROW(placamera::CameraDefinitionId(std::string()), placamera::CameraValidationError);
-        EXPECT_THROW(placamera::ImageId(std::string(" ")), placamera::CameraValidationError);
-        EXPECT_THROW(ReferenceSourceId(std::string()), placamera::CameraValidationError);
+        EXPECT_THROW(placamera::CameraDefinitionId{std::string{}}, placamera::CameraValidationError);
+        EXPECT_THROW(placamera::ImageId{std::string{" "}}, placamera::CameraValidationError);
+        EXPECT_THROW(ReferenceSourceId{std::string{}}, placamera::CameraValidationError);
     }
 
     TEST(CameraReferenceTypesTest, RejectsNonRotationPose)
@@ -46,23 +46,20 @@ namespace
         asymmetric[1] = 0.5;
         EXPECT_THROW(PoseCovariance::matrix(asymmetric), placamera::CameraValidationError);
 
-        EXPECT_THROW(PoseCovariance::diagonal({1.0, 1.0, 1.0, 1.0, -0.1, 1.0}),
-                     placamera::CameraValidationError);
+        EXPECT_THROW(PoseCovariance::diagonal({1.0, 1.0, 1.0, 1.0, -0.1, 1.0}), placamera::CameraValidationError);
         EXPECT_THROW(PoseCovariance::diagonal({1.0, 1.0, 1.0, 1.0, 0.0, 1.0},
                                               PoseCovarianceComponents::PositionAndRotation,
                                               CovarianceDefiniteness::PositiveDefinite),
                      placamera::CameraValidationError);
-        const PoseCovariance semidefinite =
-            PoseCovariance::diagonal({1.0, 1.0, 1.0, 1.0, 0.0, 1.0});
+        const PoseCovariance semidefinite = PoseCovariance::diagonal({1.0, 1.0, 1.0, 1.0, 0.0, 1.0});
         EXPECT_EQ(semidefinite.definiteness(), CovarianceDefiniteness::PositiveSemidefinite);
     }
 
     TEST(CameraReferenceTypesTest, PropagatesRigidAndSimilarityCovarianceInCanonicalOrder)
     {
-        const PoseCovariance covariance =
-            PoseCovariance::diagonal({1.0, 4.0, 9.0, 0.01, 0.04, 0.09},
-                                     PoseCovarianceComponents::PositionAndRotation,
-                                     CovarianceDefiniteness::PositiveDefinite);
+        const PoseCovariance covariance = PoseCovariance::diagonal({1.0, 4.0, 9.0, 0.01, 0.04, 0.09},
+                                                                   PoseCovarianceComponents::PositionAndRotation,
+                                                                   CovarianceDefiniteness::PositiveDefinite);
         const placamera::RotationMatrix quarter_turn{{0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0}};
         const auto rigid = propagatePoseCovarianceRigid(covariance, quarter_turn);
         ASSERT_TRUE(rigid) << rigid.message();

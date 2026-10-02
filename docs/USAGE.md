@@ -190,6 +190,12 @@ master identities.
 Metashape XML, and Metashape reference text. Import does not invent application
 identities or image sizes missing from the source.
 
+Metashape XML may be UTF-8 (optionally with a BOM) or UTF-16 with a little-endian
+or big-endian BOM. The importer converts UTF-16 to UTF-8 and rejects malformed
+Unicode with a parse error. Metashape reference text is required to be UTF-8;
+UTF-8 BOM is accepted, while GBK, GB18030, and UTF-16 reference text are rejected
+explicitly.
+
 ```cpp
 #include <placamera/formats.h>
 

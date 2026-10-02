@@ -20,12 +20,12 @@ namespace placamera
 
         std::string trim(std::string text)
         {
-            const auto first = text.find_first_not_of(" \t\r\n\f\v");
+            const auto first = text.find_first_not_of(" \t\n\f\v");
             if (first == std::string::npos)
             {
                 return {};
             }
-            const auto last = text.find_last_not_of(" \t\r\n\f\v");
+            const auto last = text.find_last_not_of(" \t\n\f\v");
             return text.substr(first, last - first + 1);
         }
 
@@ -38,7 +38,189 @@ namespace placamera
             return text;
         }
 
+        void appendUtf8(std::string& output, unsigned int codepoint)
+        {
+            if (codepoint <= 0x7F)
+            {
+                output.push_back(static_cast<char>(codepoint));
+            }
+            else if (codepoint <= 0x7FF)
+            {
+                output.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+                output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+            }
+            else if (codepoint <= 0xFFFF)
+            {
+                output.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+                output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+                output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+            }
+            else
+            {
+                output.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+                output.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+                output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+                output.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+            }
+        }
+
+        bool validUtf8(std::string_view text)
+        {
+            for (std::size_t index = 0; index < text.size();)
+            {
+                const auto lead = static_cast<unsigned char>(text[index]);
+                if (lead < 0x80)
+                {
+                    ++index;
+                    continue;
+                }
+                int length = 0;
+                unsigned int codepoint = 0;
+                if (lead >= 0xC2 && lead <= 0xDF)
+                {
+                    length = 2;
+                    codepoint = lead & 0x1F;
+                }
+                else if (lead >= 0xE0 && lead <= 0xEF)
+                {
+                    length = 3;
+                    codepoint = lead & 0x0F;
+                }
+                else if (lead >= 0xF0 && lead <= 0xF4)
+                {
+                    length = 4;
+                    codepoint = lead & 0x07;
+                }
+                else
+                {
+                    return false;
+                }
+                if (index + static_cast<std::size_t>(length) > text.size())
+                {
+                    return false;
+                }
+                for (int offset = 1; offset < length; ++offset)
+                {
+                    const auto byte = static_cast<unsigned char>(text[index + static_cast<std::size_t>(offset)]);
+                    if ((byte & 0xC0) != 0x80)
+                    {
+                        return false;
+                    }
+                    codepoint = (codepoint << 6) | (byte & 0x3F);
+                }
+                if ((length == 3 && (codepoint < 0x800 || (codepoint >= 0xD800 && codepoint <= 0xDFFF))) ||
+                    (length == 4 && (codepoint < 0x10000 || codepoint > 0x10FFFF)))
+                {
+                    return false;
+                }
+                index += static_cast<std::size_t>(length);
+            }
+            return true;
+        }
+
+        std::string normalizeMetashapeXml(std::string_view input)
+        {
+            if (input.starts_with("\xEF\xBB\xBF"))
+            {
+                input.remove_prefix(3);
+            }
+            if (input.starts_with("\xFF\xFE") || input.starts_with("\xFE\xFF"))
+            {
+                const bool big_endian = input.starts_with("\xFE\xFF");
+                input.remove_prefix(2);
+                if (input.size() % 2 != 0)
+                {
+                    throw std::runtime_error("Metashape XML has an incomplete UTF-16 code unit");
+                }
+                std::string output;
+                output.reserve(input.size() / 2);
+                for (std::size_t index = 0; index < input.size(); index += 2)
+                {
+                    const auto first = static_cast<unsigned char>(input[index]);
+                    const auto second = static_cast<unsigned char>(input[index + 1]);
+                    const unsigned int unit = big_endian ? (first << 8) | second : (second << 8) | first;
+                    unsigned int codepoint = unit;
+                    if (unit >= 0xD800 && unit <= 0xDBFF)
+                    {
+                        if (index + 3 >= input.size())
+                        {
+                            throw std::runtime_error("Metashape XML has an unpaired UTF-16 high surrogate");
+                        }
+                        const auto next_first = static_cast<unsigned char>(input[index + 2]);
+                        const auto next_second = static_cast<unsigned char>(input[index + 3]);
+                        const unsigned int next =
+                            big_endian ? (next_first << 8) | next_second : (next_second << 8) | next_first;
+                        if (next < 0xDC00 || next > 0xDFFF)
+                        {
+                            throw std::runtime_error("Metashape XML has an invalid UTF-16 surrogate pair");
+                        }
+                        codepoint = 0x10000 + ((unit - 0xD800) << 10) + (next - 0xDC00);
+                        index += 2;
+                    }
+                    else if (unit >= 0xDC00 && unit <= 0xDFFF)
+                    {
+                        throw std::runtime_error("Metashape XML has an unpaired UTF-16 low surrogate");
+                    }
+                    appendUtf8(output, codepoint);
+                }
+                return output;
+            }
+            if (!validUtf8(input))
+            {
+                throw std::runtime_error("Metashape XML must be UTF-8 or UTF-16 with a byte-order mark");
+            }
+            return std::string(input);
+        }
+
         std::optional<std::string> xmlAttribute(const std::string& xml, const std::string& name);
+
+        double finiteNumber(std::string_view text, std::string_view field)
+        {
+            const std::string normalized = trim(std::string(text));
+            if (normalized.empty())
+            {
+                throw std::runtime_error("Metashape " + std::string(field) + " is empty");
+            }
+            std::size_t consumed = 0;
+            double value = 0.0;
+            try
+            {
+                value = std::stod(normalized, &consumed);
+            }
+            catch (const std::exception&)
+            {
+                throw std::runtime_error("Metashape " + std::string(field) + " is not a valid number: " + normalized);
+            }
+            if (consumed != normalized.size() || !std::isfinite(value))
+            {
+                throw std::runtime_error("Metashape " + std::string(field) + " must be a finite number: " + normalized);
+            }
+            return value;
+        }
+
+        int integer(std::string_view text, std::string_view field)
+        {
+            const std::string normalized = trim(std::string(text));
+            if (normalized.empty())
+            {
+                throw std::runtime_error("Metashape " + std::string(field) + " is empty");
+            }
+            std::size_t consumed = 0;
+            int value = 0;
+            try
+            {
+                value = std::stoi(normalized, &consumed);
+            }
+            catch (const std::exception&)
+            {
+                throw std::runtime_error("Metashape " + std::string(field) + " is not a valid integer: " + normalized);
+            }
+            if (consumed != normalized.size())
+            {
+                throw std::runtime_error("Metashape " + std::string(field) + " must be an integer: " + normalized);
+            }
+            return value;
+        }
 
         FrameProjectionModel metashapeProjection(const std::string& sensor)
         {
@@ -100,7 +282,8 @@ namespace placamera
                 }
                 else if (*name == "rolling_shutter_flags")
                 {
-                    mode = std::stoi(*value) == 3 ? RollingShutterMode::Regularized : RollingShutterMode::Full;
+                    mode = integer(*value, "rolling_shutter_flags") == 3 ? RollingShutterMode::Regularized
+                                                                           : RollingShutterMode::Full;
                 }
             }
             return mode;
@@ -209,7 +392,7 @@ namespace placamera
         double xmlDoubleOr(const std::string& xml, const std::string& tag, double fallback)
         {
             const auto value = xmlElementText(xml, tag);
-            return value.has_value() && !value->empty() ? std::stod(*value) : fallback;
+            return value.has_value() && !value->empty() ? finiteNumber(*value, "<" + tag + ">") : fallback;
         }
 
         struct MetashapeSensor
@@ -217,26 +400,6 @@ namespace placamera
             ImportedPixelCalibration calibration;
             RollingShutterMode rollingShutterMode = RollingShutterMode::Disabled;
         };
-
-        bool matchesMetashapeInspectionView(const ImportedPixelCalibration& imported, double tolerance) noexcept
-        {
-            if (!imported.metashapeCalibration)
-            {
-                return true;
-            }
-            const MetashapeCalibration& exact = *imported.metashapeCalibration;
-            const auto& matrix = imported.intrinsicMatrix;
-            const BrownConradyDistortion& distortion = imported.distortion;
-            const auto matches = [tolerance](double left, double right)
-            { return std::isfinite(left) && std::isfinite(right) && std::abs(left - right) <= tolerance; };
-            return matches(matrix[0], exact.f + exact.b1) && matches(matrix[1], exact.b2) &&
-                   matches(matrix[2], exact.cx) && matches(matrix[4], exact.f) && matches(matrix[5], exact.cy) &&
-                   matches(distortion.radialK1, exact.k1) && matches(distortion.radialK2, exact.k2) &&
-                   matches(distortion.radialK3, exact.k3) && matches(distortion.radialK4, exact.k4) &&
-                   matches(distortion.tangentialP1, exact.p1) && matches(distortion.tangentialP2, exact.p2) &&
-                   matches(distortion.tangentialP3, exact.p3) && matches(distortion.tangentialP4, exact.p4) &&
-                   distortion.tangentialConvention == BrownTangentialConvention::Metashape;
-        }
 
         std::unordered_map<int, MetashapeSensor> metashapeSensors(const std::string& xml)
         {
@@ -260,8 +423,12 @@ namespace placamera
                 {
                     throw std::runtime_error("Metashape resolution has no width or height");
                 }
-                const double width = std::stod(*width_text);
-                const double height = std::stod(*height_text);
+                const double width = finiteNumber(*width_text, "resolution width");
+                const double height = finiteNumber(*height_text, "resolution height");
+                if (!(width > 0.0) || !(height > 0.0))
+                {
+                    throw std::runtime_error("Metashape resolution width and height must be positive");
+                }
 
                 const auto calibrations = xmlBlocks(sensor_block, "calibration");
                 if (calibrations.empty())
@@ -319,7 +486,7 @@ namespace placamera
                 exact.p4 = distortion.tangentialP4;
                 exact.principalPointDecomposition = PrincipalPointDecomposition{width * 0.5, height * 0.5, cx, cy};
                 sensor.calibration.metashapeCalibration = exact;
-                sensors.emplace(std::stoi(*id), sensor);
+                sensors.emplace(integer(*id, "sensor id"), sensor);
             }
             if (sensors.empty())
             {
@@ -329,18 +496,6 @@ namespace placamera
         }
 
     } // namespace
-
-    bool CameraImportCompatibility::isExactlyRepresentable(double tolerance) const noexcept
-    {
-        if (!std::isfinite(tolerance) || tolerance < 0.0 || unsupportedReason.has_value())
-        {
-            return false;
-        }
-        return std::all_of(sourceOnlyTerms.begin(),
-                           sourceOnlyTerms.end(),
-                           [tolerance](const CameraImportCalibrationTerm& term)
-                           { return std::isfinite(term.value) && std::abs(term.value) <= tolerance; });
-    }
 
     Result<std::vector<ImportedCamera>> readMiddleburyPar(std::istream& input)
     {
@@ -416,7 +571,7 @@ namespace placamera
     {
         try
         {
-            const std::string document(xml);
+            const std::string document = normalizeMetashapeXml(xml);
             const auto sensors = metashapeSensors(document);
             std::vector<ImportedCamera> cameras;
             for (const std::string& block : xmlBlocks(document, "camera"))
@@ -428,7 +583,7 @@ namespace placamera
                 {
                     continue;
                 }
-                const auto sensor = sensors.find(std::stoi(*sensor_id));
+                const auto sensor = sensors.find(integer(*sensor_id, "camera sensor_id"));
                 if (sensor == sensors.end())
                 {
                     throw std::runtime_error("Metashape camera references unknown sensor_id: " + *sensor_id);
@@ -454,99 +609,6 @@ namespace placamera
             return Result<std::vector<ImportedCamera>>::failure(
                 CameraErrorCode::ParseFailure, error.what(), "Metashape XML");
         }
-    }
-
-    Result<CentralCameraGeometry> makeCentralCameraGeometry(const ImportedCamera& camera,
-                                                            CameraDefinitionId definitionId,
-                                                            FrameId worldFrame,
-                                                            double tolerance)
-    {
-        if (!std::isfinite(tolerance) || tolerance < 0.0)
-        {
-            return Result<FramePinholeGeometry>::failure(CameraErrorCode::InvalidArgument,
-                                                         "dataset camera tolerance must be finite and non-negative");
-        }
-        if (!camera.compatibility.isExactlyRepresentable(tolerance))
-        {
-            const std::string reason = camera.compatibility.unsupportedReason.value_or(
-                "dataset camera contains source calibration terms that the central-camera model cannot express");
-            return Result<FramePinholeGeometry>::failure(CameraErrorCode::UnsupportedModel, reason);
-        }
-        if (!std::all_of(camera.calibration.intrinsicMatrix.begin(),
-                         camera.calibration.intrinsicMatrix.end(),
-                         [](double value) { return std::isfinite(value); }))
-        {
-            return Result<FramePinholeGeometry>::failure(CameraErrorCode::InvalidIntrinsics,
-                                                         "dataset camera intrinsics must be finite");
-        }
-        if (!matchesMetashapeInspectionView(camera.calibration, tolerance))
-        {
-            return Result<FramePinholeGeometry>::failure(
-                CameraErrorCode::InvalidModelState,
-                "dataset camera's lossless Metashape calibration disagrees with its normalized inspection view");
-        }
-
-        const auto& intrinsics = camera.calibration.intrinsicMatrix;
-        if (std::abs(intrinsics[3]) > tolerance || std::abs(intrinsics[6]) > tolerance ||
-            std::abs(intrinsics[7]) > tolerance || std::abs(intrinsics[8] - 1.0) > tolerance)
-        {
-            return Result<FramePinholeGeometry>::failure(
-                CameraErrorCode::UnsupportedModel, "dataset camera has a nonstandard homogeneous calibration row");
-        }
-
-        try
-        {
-            std::shared_ptr<const FramePinholeDefinition> definition;
-            if (camera.calibration.metashapeCalibration)
-            {
-                definition = FramePinholeDefinition::create(std::move(definitionId),
-                                                            *camera.calibration.metashapeCalibration,
-                                                            PixelConvention::PixelCenter,
-                                                            worldFrame,
-                                                            false,
-                                                            1.0,
-                                                            1,
-                                                            1,
-                                                            camera.calibration.projectionModel);
-            }
-            else
-            {
-                definition = FramePinholeDefinition::create(
-                    std::move(definitionId),
-                    {intrinsics[0], intrinsics[4], intrinsics[2], intrinsics[5], 1.0, 1, 1, intrinsics[1]},
-                    camera.calibration.distortion,
-                    PixelConvention::PixelCenter,
-                    worldFrame,
-                    false,
-                    camera.calibration.projectionModel);
-            }
-            auto pose = Pose::create(std::move(worldFrame), camera.center, camera.cameraToWorldRotation);
-            return Result<FramePinholeGeometry>::success({std::move(definition), std::move(pose)});
-        }
-        catch (const CameraValidationError& error)
-        {
-            return Result<FramePinholeGeometry>::failure(error.code(), error.what());
-        }
-        catch (const std::exception& error)
-        {
-            return Result<FramePinholeGeometry>::failure(CameraErrorCode::InvalidModelState, error.what());
-        }
-    }
-
-    Result<CentralCameraGeometry> makeDatasetCentralCamera(const DatasetFrameCamera& camera,
-                                                           CameraDefinitionId definitionId,
-                                                           FrameId worldFrame,
-                                                           double tolerance)
-    {
-        return makeCentralCameraGeometry(camera, std::move(definitionId), std::move(worldFrame), tolerance);
-    }
-
-    Result<FramePinholeGeometry> makeDatasetFramePinhole(const ImportedCamera& camera,
-                                                         CameraDefinitionId definitionId,
-                                                         FrameId worldFrame,
-                                                         double tolerance)
-    {
-        return makeCentralCameraGeometry(camera, std::move(definitionId), std::move(worldFrame), tolerance);
     }
 
 } // namespace placamera

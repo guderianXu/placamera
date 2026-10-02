@@ -58,11 +58,15 @@ namespace placamera
             return input;
         }
 
-        std::vector<std::filesystem::path> filesWithSuffix(const std::filesystem::path& path, std::string_view suffix)
+        std::vector<std::filesystem::path> filesWithSuffix(const std::filesystem::path& path,
+                                                           std::string_view suffix,
+                                                           bool allow_arbitrary_file = false)
         {
             if (std::filesystem::is_regular_file(path))
             {
-                return {path};
+                return allow_arbitrary_file || endsWith(lower(pathUtf8(path.filename())), suffix)
+                           ? std::vector<std::filesystem::path>{path}
+                           : std::vector<std::filesystem::path>{};
             }
             std::vector<std::filesystem::path> matches;
             if (std::filesystem::is_directory(path))
@@ -172,7 +176,7 @@ namespace placamera
 
         CameraProjectImportResult importMiddlebury(const std::filesystem::path& path)
         {
-            const auto files = filesWithSuffix(path, "_par.txt");
+            const auto files = filesWithSuffix(path, "_par.txt", true);
             if (files.empty())
             {
                 throw std::runtime_error("no Middlebury *_par.txt file found: " + pathUtf8(path));
@@ -198,7 +202,7 @@ namespace placamera
 
         CameraProjectImportResult importEpfl(const std::filesystem::path& path)
         {
-            const auto files = filesWithSuffix(path, ".camera");
+            const auto files = filesWithSuffix(path, ".camera", true);
             if (files.empty())
             {
                 throw std::runtime_error("no EPFL .camera file found: " + pathUtf8(path));

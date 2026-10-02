@@ -113,6 +113,15 @@ namespace
         EXPECT_FALSE(imported.cameras[0].sourceImageId.has_value());
     }
 
+    TEST(PlaCameraProjectImport, AutoDoesNotTreatArbitraryFileAsMiddlebury)
+    {
+        TestFiles files("project_import_auto_unknown");
+        files.write("camera.bin", "1\nimage.png 120 0 40 0 130 50 0 0 1 0 -1 0 1 0 0 0 0 1 2 -3 4\n");
+
+        const auto imported_result = placamera::importCameraProject(files.path / "camera.bin");
+        EXPECT_FALSE(imported_result);
+    }
+
     TEST(PlaCameraProjectImport, EpflFileUsesImageNameFromFilename)
     {
         TestFiles files("project_import_epfl");

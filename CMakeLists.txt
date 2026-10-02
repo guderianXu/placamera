@@ -6,6 +6,16 @@ project(placamera
     LANGUAGES CXX
 )
 
+# PlaCamera sources and diagnostics are stored as UTF-8. Keep the standalone
+# package consistent with the parent PlaScan build when MSVC uses a local code
+# page such as 936.
+if(MSVC)
+    add_compile_options(
+        $<$<COMPILE_LANGUAGE:CXX>:/utf-8>
+        $<$<COMPILE_LANGUAGE:CXX>:/EHsc>
+    )
+endif()
+
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
@@ -27,40 +37,45 @@ configure_file(
 )
 
 add_library(placamera STATIC
-    src/capabilities.cpp
-    src/camera_baseline.cpp
-    src/camera_topology.cpp
-    src/colmap.cpp
-    src/dataset_formats.cpp
-    src/frame_camera_definition.cpp
-    src/frame_camera_model.cpp
-    src/frame_bundle_linearization.cpp
-    src/frame_numeric_state.cpp
-    src/instance_set.cpp
-    src/internal/frame_camera_math.cpp
-    src/internal/linescan_optics.cpp
-    src/internal/linescan_numeric_projection.cpp
-    src/internal/linescan_projection.cpp
-    src/internal/rpc_geodesy.cpp
-    src/internal/rpc_math.cpp
-    src/linescan_camera_definition.cpp
-    src/linescan_camera_model.cpp
-    src/linescan_bundle_linearization.cpp
-    src/linescan_numeric_state.cpp
-    src/linescan_trajectory.cpp
-    src/model.cpp
-    src/optimization.cpp
-    src/project_import.cpp
-    src/rig_topology.cpp
-    src/metashape_reference_import.cpp
-    src/registry.cpp
-    src/rpc_adjustment.cpp
-    src/rpc_intersection.cpp
-    src/rpc_metadata.cpp
-    src/rpc_camera_definition.cpp
-    src/rpc_camera_model.cpp
-    src/types.cpp
-    src/tsai.cpp
+    src/model/capabilities.cpp
+    src/model/instance_set.cpp
+    src/model/model.cpp
+    src/model/optimization.cpp
+    src/model/registry.cpp
+    src/model/types.cpp
+    src/frame/camera_baseline.cpp
+    src/frame/camera_topology.cpp
+    src/frame/frame_bundle_linearization.cpp
+    src/frame/frame_camera_definition.cpp
+    src/frame/frame_camera_model.cpp
+    src/frame/frame_camera_optimization.cpp
+    src/frame/frame_numeric_state.cpp
+    src/frame/rig_topology.cpp
+    src/frame/internal/frame_camera_math.cpp
+    src/linescan/linescan_bundle_linearization.cpp
+    src/linescan/linescan_camera_definition.cpp
+    src/linescan/linescan_camera_model.cpp
+    src/linescan/linescan_numeric_evaluation.cpp
+    src/linescan/linescan_numeric_regularization.cpp
+    src/linescan/linescan_numeric_state.cpp
+    src/linescan/linescan_numeric_update.cpp
+    src/linescan/linescan_trajectory.cpp
+    src/linescan/internal/linescan_numeric_projection.cpp
+    src/linescan/internal/linescan_optics.cpp
+    src/linescan/internal/linescan_projection.cpp
+    src/rpc/rpc_adjustment.cpp
+    src/rpc/rpc_camera_definition.cpp
+    src/rpc/rpc_camera_model.cpp
+    src/rpc/rpc_intersection.cpp
+    src/rpc/rpc_metadata.cpp
+    src/rpc/internal/rpc_geodesy.cpp
+    src/rpc/internal/rpc_math.cpp
+    src/formats/colmap.cpp
+    src/formats/dataset_formats.cpp
+    src/formats/dataset_geometry.cpp
+    src/formats/metashape_reference_import.cpp
+    src/formats/project_import.cpp
+    src/formats/tsai.cpp
 )
 add_library(placamera::placamera ALIAS placamera)
 
@@ -120,7 +135,7 @@ if(PLACAMERA_BUILD_GDAL)
     if(NOT TARGET GDAL::GDAL)
         message(FATAL_ERROR "PLACAMERA_BUILD_GDAL requires the GDAL::GDAL CMake target")
     endif()
-    add_library(placamera_gdal STATIC src/rpc_raster.cpp)
+    add_library(placamera_gdal STATIC src/gdal/rpc_raster.cpp)
     add_library(placamera::gdal ALIAS placamera_gdal)
     target_compile_features(placamera_gdal PUBLIC cxx_std_20)
     target_link_libraries(placamera_gdal PUBLIC placamera::placamera PRIVATE GDAL::GDAL)
@@ -137,13 +152,13 @@ if(PLACAMERA_BUILD_STATE)
     find_package(nlohmann_json CONFIG REQUIRED)
 
     add_library(placamera_state STATIC
-        src/isd.cpp
-        src/internal/state_json_common.cpp
-        src/state_codec.cpp
-        src/state_frame_codec.cpp
-        src/state_linescan_definition_codec.cpp
-        src/state_linescan_instance_codec.cpp
-        src/state_rpc_codec.cpp
+        src/state/isd.cpp
+        src/state/internal/state_json_common.cpp
+        src/state/state_codec.cpp
+        src/state/state_frame_codec.cpp
+        src/state/state_linescan_definition_codec.cpp
+        src/state/state_linescan_instance_codec.cpp
+        src/state/state_rpc_codec.cpp
     )
     add_library(placamera::state ALIAS placamera_state)
     target_compile_features(placamera_state PUBLIC cxx_std_20)

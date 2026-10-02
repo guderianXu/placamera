@@ -80,6 +80,24 @@ The optional `placamera::gdal` component depends on GDAL and keeps its types out
 Optional future components and the reason they remain outside the core are
 documented in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
+## Source layout
+
+The public API stays under `include/placamera/`. Implementations under `src/`
+are grouped by responsibility:
+
+- `model/` owns shared identities, capabilities, instance sets, optimization
+  contracts, and the model registry;
+- `frame/`, `linescan/`, and `rpc/` own their model definitions, instances,
+  numerical operations, and model-local `internal/` math;
+- `formats/` owns Tsai, COLMAP, dataset, and camera-project import;
+- `state/`, `reference/`, and `gdal/` implement the optional components, with
+  JSON helpers private to `state/internal/`.
+
+The central-camera model's projection code and optimization updates, the
+line-scan numeric layout/update/regularization/evaluation code, and dataset
+parsing and geometry conversion live in separate implementation files. This
+layout does not change installed headers or exported CMake targets.
+
 ## External camera formats
 
 `<placamera/tsai.h>` reads and writes Tsai cameras through standard C++ streams or

@@ -5,7 +5,42 @@
 #include <array>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
+
+namespace
+{
+
+    std::string metashapeXmlInUtf16(std::string_view xml, bool bigEndian)
+    {
+        std::string encoded;
+        encoded.push_back(static_cast<char>(bigEndian ? 0xFE : 0xFF));
+        encoded.push_back(static_cast<char>(bigEndian ? 0xFF : 0xFE));
+        for (const unsigned char character : xml)
+        {
+            if (bigEndian)
+            {
+                encoded.push_back('\0');
+                encoded.push_back(static_cast<char>(character));
+            }
+            else
+            {
+                encoded.push_back(static_cast<char>(character));
+                encoded.push_back('\0');
+            }
+        }
+        return encoded;
+    }
+
+    std::string metashapeXml()
+    {
+        return "<sensor id='3'><resolution width='1000' height='800'/>"
+               "<calibration><f>500</f></calibration></sensor>"
+               "<camera sensor_id='3' label='frame.jpg'>"
+               "<transform>1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</transform></camera>";
+    }
+
+} // namespace
 
 TEST(PlaCameraDatasetFormats, MiddleburyWorldToCameraPoseBecomesCameraToWorld)
 {
@@ -104,6 +139,82 @@ TEST(PlaCameraDatasetFormats, MetashapeReportsStructuredParseFailure)
     EXPECT_FALSE(parsed);
     EXPECT_EQ(parsed.errorCode(), placamera::CameraErrorCode::ParseFailure);
     EXPECT_EQ(parsed.error().source, "Metashape XML");
+}
+
+TEST(PlaCameraDatasetFormats, MetashapeAcceptsUtf16LittleEndianXml)
+{
+    const auto xml = metashapeXml();
+    const auto parsed = placamera::parseMetashapeDocument(metashapeXmlInUtf16(xml, false));
+    ASSERT_TRUE(parsed) << parsed.message();
+    ASSERT_EQ(parsed.value().size(), 1u);
+    EXPECT_EQ(parsed.value()[0].imageName, "frame.jpg");
+}
+
+TEST(PlaCameraDatasetFormats, MetashapeAcceptsUtf16BigEndianXml)
+{
+    const auto xml = metashapeXml();
+    const auto parsed = placamera::parseMetashapeDocument(metashapeXmlInUtf16(xml, true));
+    ASSERT_TRUE(parsed) << parsed.message();
+    ASSERT_EQ(parsed.value().size(), 1u);
+    EXPECT_EQ(parsed.value()[0].imageName, "frame.jpg");
+}
+
+TEST(PlaCameraDatasetFormats, MetashapeAcceptsUtf8BomXml)
+{
+    std::string xml = "\xEF\xBB\xBF";
+    xml += metashapeXml();
+    const auto parsed = placamera::parseMetashapeDocument(xml);
+    ASSERT_TRUE(parsed) << parsed.message();
+    ASSERT_EQ(parsed.value().size(), 1u);
+    EXPECT_EQ(parsed.value()[0].imageName, "frame.jpg");
+}
+
+TEST(PlaCameraDatasetFormats, MetashapeRejectsMalformedUtf16Xml)
+{
+    std::string malformed;
+    malformed.push_back(static_cast<char>(0xFF));
+    malformed.push_back(static_cast<char>(0xFE));
+    malformed.push_back('\0');
+    malformed.push_back(static_cast<char>(0xD8));
+
+    const auto parsed = placamera::parseMetashapeDocument(malformed);
+    EXPECT_FALSE(parsed);
+    EXPECT_EQ(parsed.errorCode(), placamera::CameraErrorCode::ParseFailure);
+    EXPECT_NE(parsed.message().find("UTF-16"), std::string::npos);
+}
+
+TEST(PlaCameraDatasetFormats, MetashapeRejectsInvalidUtf8Xml)
+{
+    std::string malformed = "<sensor id='3'>";
+    malformed.push_back(static_cast<char>(0xC3));
+    malformed.push_back('(');
+    malformed += "</sensor>";
+    const auto parsed = placamera::parseMetashapeDocument(malformed);
+    EXPECT_FALSE(parsed);
+    EXPECT_EQ(parsed.errorCode(), placamera::CameraErrorCode::ParseFailure);
+    EXPECT_NE(parsed.message().find("UTF-8"), std::string::npos);
+}
+
+TEST(PlaCameraDatasetFormats, MetashapeRejectsTrailingGarbageInNumericValues)
+{
+    const std::string xml = "<sensor id='3'><resolution width='1000' height='800'/>"
+                            "<calibration><f>500px</f></calibration></sensor>"
+                            "<camera sensor_id='3' label='frame.jpg'>"
+                            "<transform>1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</transform></camera>";
+    const auto parsed = placamera::parseMetashapeDocument(xml);
+    EXPECT_FALSE(parsed);
+    EXPECT_EQ(parsed.errorCode(), placamera::CameraErrorCode::ParseFailure);
+}
+
+TEST(PlaCameraDatasetFormats, MetashapeRejectsNonFiniteNumericValues)
+{
+    const std::string xml = "<sensor id='3'><resolution width='1000' height='800'/>"
+                            "<calibration><f>nan</f></calibration></sensor>"
+                            "<camera sensor_id='3' label='frame.jpg'>"
+                            "<transform>1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</transform></camera>";
+    const auto parsed = placamera::parseMetashapeDocument(xml);
+    EXPECT_FALSE(parsed);
+    EXPECT_EQ(parsed.errorCode(), placamera::CameraErrorCode::ParseFailure);
 }
 
 TEST(PlaCameraDatasetFormats, MetashapeRetainsEveryNativeProjectionFamily)
